@@ -1,4 +1,4 @@
-# Contributing to Crab City
+# Contributing to Workshop
 
 ## Prerequisites
 
@@ -10,34 +10,34 @@
 ## Clone and Build
 
 ```sh
-git clone https://github.com/anthropics/crab-city && cd crab-city
+git clone https://github.com/anthropics/workshop && cd workshop
 
 # Cargo for development (fast iteration)
-cargo build -p crab_city
+cargo build -p workshop
 
 # Bazel for CI-equivalent builds (includes format checks, edition 2024 enforcement)
-bazel build //packages/crab_city:crab
+bazel build //packages/workshop:work
 ```
 
 ## Running the Server
 
 ```sh
 # Start server + TUI picker
-cargo run -p crab_city
+cargo run -p workshop
 
 # Start server only (for web UI development)
-cargo run -p crab_city -- server --debug
+cargo run -p workshop -- server --debug
 ```
 
 The server starts on a random port on `127.0.0.1`. The port is printed on startup.
 
 ## Web UI Development
 
-The frontend is a SvelteKit app in `packages/crab_city_ui/`.
+The frontend is a SvelteKit app in `packages/workshop_ui/`.
 
 ```sh
 # Install dependencies
-cd packages/crab_city_ui
+cd packages/workshop_ui
 pnpm install
 
 # Start dev server with hot reload
@@ -55,20 +55,20 @@ pnpm test
 In development, the server runs without the embedded UI. To build a binary with the UI baked in:
 
 ```sh
-CRAB_CITY_UI_PATH=packages/crab_city_ui/build cargo build -p crab_city --features embedded-ui
+WORKSHOP_UI_PATH=packages/workshop_ui/build cargo build -p workshop --features embedded-ui
 ```
 
 Or use Bazel, which handles the frontend build automatically:
 
 ```sh
-bazel build //packages/crab_city:crab
+bazel build //packages/workshop:work
 ```
 
 ## Testing
 
 ```sh
 # Unit tests for any package
-cargo test -p crab_city
+cargo test -p workshop
 cargo test -p virtual_terminal
 cargo test -p <package>
 
@@ -76,7 +76,7 @@ cargo test -p <package>
 bazel test //...
 
 # Frontend tests
-cd packages/crab_city_ui && pnpm test
+cd packages/workshop_ui && pnpm test
 ```
 
 ## Formatting
@@ -119,7 +119,7 @@ These must stay in sync.
 See the [architecture doc](docs/architecture.md) for system design details, or the CLAUDE.md files in each package for module-level maps and patterns:
 
 - [`CLAUDE.md`](CLAUDE.md) — top-level build system and architecture notes
-- [`packages/crab_city/CLAUDE.md`](packages/crab_city/CLAUDE.md) — server module map, key patterns, testing
+- [`packages/workshop/CLAUDE.md`](packages/workshop/CLAUDE.md) — server module map, key patterns, testing
 
 ## Documentation
 

@@ -3,5 +3,5 @@ set -euo pipefail
 
 DATA_DIR="${1:-local/state/dev}"
 
-bazel build //packages/crab_city:crab_embedded
-exec bazel-bin/packages/crab_city/crab_embedded --data-dir "$DATA_DIR" server
+bazel build //packages/workshop:work_embedded
+exec bazel-bin/packages/workshop/work_embedded --data-dir "$DATA_DIR" server

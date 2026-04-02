@@ -27,7 +27,7 @@
 #   ./scripts/coverage.sh --below 50             # Show files under 50% coverage
 #   ./scripts/coverage.sh --skip-tests --below 30  # Analyze existing data
 #   ./scripts/coverage.sh --check 80             # CI check: fail if below 80%
-#   ./scripts/coverage.sh --targets "//packages/crab_city/..."  # Specific package
+#   ./scripts/coverage.sh --targets "//packages/workshop/..."  # Specific package
 #
 # Environment:
 #   COVERAGE_HTML=1              Alternative way to enable HTML report

@@ -1,6 +1,6 @@
 # Claude State Inference System
 
-How crab_city detects whether Claude is idle, thinking, responding, executing a
+How workshop detects whether Claude is idle, thinking, responding, executing a
 tool, or waiting for user input — and presents that to connected clients.
 
 ## Table of Contents

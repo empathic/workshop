@@ -1,0 +1,116 @@
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load(":macos_app.bzl", "macos_app")
+load(":tauri_transition.bzl", "tauri_binary", "tauri_test")
+
+package(default_visibility = ["//visibility:public"])
+
+_TAURI_DATA = [
+    "tauri.conf.json",
+    "Info.plist",
+] + glob([
+    "capabilities/**",
+    "icons/**",
+    "loading-dist/**",
+])
+
+cargo_build_script(
+    name = "build_script",
+    srcs = ["build.rs"],
+    build_script_env = {
+        "CARGO_MANIFEST_DIR": "packages/workshop_desktop",
+        # Cargo propagates this from tauri's build.rs (links = "Tauri", cargo:dev=true).
+        # In Bazel we set it directly. false = production mode (webview starts blank,
+        # our setup() navigates to the embedded server URL).
+        "DEP_TAURI_DEV": "false",
+    },
+    data = _TAURI_DATA,
+    # Receive DEP_* env vars (PERMISSION_FILES_PATH) from tauri and plugin build scripts
+    link_deps = [
+        "@crate_index//:tauri",
+        "@crate_index//:tauri-plugin-shell",
+        "@crate_index//:tauri-plugin-window-state",
+    ],
+    # no-sandbox: tauri-build reads tauri.conf.json, capabilities/, icons/ from disk
+    tags = ["no-sandbox"],
+    # Tauri requires system WebView/GTK libs — only available on macOS in CI
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [
+        "@crate_index//:blake3",
+        "@crate_index//:brotli",
+        "@crate_index//:plist",
+        "@crate_index//:png",
+        "@crate_index//:serde_json",
+        "@crate_index//:tauri-build",
+    ],
+)
+
+rust_binary(
+    name = "_workshop_desktop_raw",
+    srcs = glob(["src/**/*.rs"]),
+    compile_data = _TAURI_DATA,
+    edition = "2024",
+    rustc_env = {
+        # Proc macro generate_context!() reads tauri.conf.json relative to this
+        "CARGO_MANIFEST_DIR": "packages/workshop_desktop",
+    },
+    # no-sandbox: tauri proc macros read config and icon files from disk
+    # manual: must be built via tauri_binary (which applies cfg transition)
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":build_script",
+        "//packages/workshop:workshop_lib_embedded",
+        "@crate_index//:clap",
+        "@crate_index//:serde",
+        "@crate_index//:serde_json",
+        "@crate_index//:tauri",
+        "@crate_index//:tauri-plugin-shell",
+        "@crate_index//:tauri-plugin-window-state",
+        "@crate_index//:tokio",
+        "@crate_index//:tracing",
+        "@crate_index//:tracing-subscriber",
+    ],
+)
+
+tauri_binary(
+    name = "workshop_desktop",
+    binary = ":_workshop_desktop_raw",
+    target_compatible_with = ["@platforms//os:macos"],
+)
+
+rust_test(
+    name = "_workshop_desktop_test_raw",
+    compile_data = _TAURI_DATA,
+    crate = ":_workshop_desktop_raw",
+    edition = "2024",
+    rustc_env = {
+        "CARGO_MANIFEST_DIR": "packages/workshop_desktop",
+    },
+    # manual: must be built via tauri_test (which applies cfg transition)
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:private"],
+)
+
+tauri_test(
+    name = "workshop_desktop_test",
+    target_compatible_with = ["@platforms//os:macos"],
+    test = ":_workshop_desktop_test_raw",
+)
+
+macos_app(
+    name = "macos_app",
+    binary = ":workshop_desktop",
+    binary_name = "workshop_desktop",
+    bundle_name = "Workshop",
+    info_plist = "Info.plist",
+    target_compatible_with = ["@platforms//os:macos"],
+)

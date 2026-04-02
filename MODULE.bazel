@@ -1,6 +1,6 @@
 module(
-    name = "crabcity",
-    repo_name = "crabcity",
+    name = "workshop",
+    repo_name = "workshop",
 )
 
 bazel_dep(name = "platforms", version = "1.0.0")
@@ -34,14 +34,14 @@ bazel_dep(name = "rules_nodejs", version = "6.7.3")
 npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
 npm.npm_translate_lock(
     name = "npm",
-    npmrc = "//packages/crab_city_ui:.npmrc",
-    pnpm_lock = "//packages/crab_city_ui:pnpm-lock.yaml",
+    npmrc = "//packages/workshop_ui:.npmrc",
+    pnpm_lock = "//packages/workshop_ui:pnpm-lock.yaml",
 )
 use_repo(npm, "npm")
 
 rules_ts_ext = use_extension("@aspect_rules_ts//ts:extensions.bzl", "ext")
 rules_ts_ext.deps(
-    ts_version_from = "//packages/crab_city_ui:package.json",
+    ts_version_from = "//packages/workshop_ui:package.json",
 )
 use_repo(rules_ts_ext, "npm_typescript")
 
@@ -62,13 +62,13 @@ use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all")
 
-# Single-source the crab_city version from Cargo.toml
+# Single-source the workshop version from Cargo.toml
 cargo_version = use_extension("//bazel:cargo_version.bzl", "cargo_version")
 cargo_version.parse(
-    name = "crab_version",
-    cargo_toml = "//packages/crab_city:Cargo.toml",
+    name = "workshop_version",
+    cargo_toml = "//packages/workshop:Cargo.toml",
 )
-use_repo(cargo_version, "crab_version")
+use_repo(cargo_version, "workshop_version")
 
 crate_index = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
 

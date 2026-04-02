@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickelpack/tauri-v2/refs/heads/dev/crates/tauri-schema-generator/schemas/config.schema.json",
+  "productName": "Workshop",
+  "version": "0.1.0",
+  "identifier": "com.workshop.desktop",
+  "build": {
+    "frontendDist": "loading-dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "Workshop",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "center": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}

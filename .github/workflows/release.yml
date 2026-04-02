@@ -15,11 +15,11 @@ jobs:
           - target: linux-x86_64
             runner: ubuntu-latest
             bazel_args: "--platforms=//bazel/config/platform/rust:linux_x86_64"
-            asset: crab-linux-x86_64
+            asset: work-linux-x86_64
           - target: macos-aarch64
             runner: macos-latest
             bazel_args: ""
-            asset: crab-macos-aarch64
+            asset: work-macos-aarch64
 
     runs-on: ${{ matrix.runner }}
     steps:
@@ -38,13 +38,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/bazel-disk-cache
-          key: bazel-disk-${{ matrix.target }}-${{ hashFiles('MODULE.bazel', 'Cargo.lock', 'packages/crab_city_ui/pnpm-lock.yaml', 'packages/crab_city_ui/src/**') }}
+          key: bazel-disk-${{ matrix.target }}-${{ hashFiles('MODULE.bazel', 'Cargo.lock', 'packages/workshop_ui/pnpm-lock.yaml', 'packages/workshop_ui/src/**') }}
           restore-keys: |
             bazel-disk-${{ matrix.target }}-
 
       - name: Build
         run: >
-          bazel build //packages/crab_city:crab_embedded
+          bazel build //packages/workshop:work_embedded
           --compilation_mode opt
           ${{ matrix.bazel_args }}
           --disk_cache=~/.cache/bazel-disk-cache
@@ -52,14 +52,14 @@ jobs:
 
       - name: Verify embedded UI assets
         run: >
-          bazel test //packages/crab_city_ui/crate:embed_test
+          bazel test //packages/workshop_ui/crate:embed_test
           --compilation_mode opt
           ${{ matrix.bazel_args }}
           --disk_cache=~/.cache/bazel-disk-cache
           --repository_cache=~/.cache/bazel-repo-cache
 
       - name: Prepare artifact
-        run: cp bazel-bin/packages/crab_city/crab_embedded ${{ matrix.asset }}
+        run: cp bazel-bin/packages/workshop/work_embedded ${{ matrix.asset }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -81,13 +81,13 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
-          for dir in artifacts/crab-*/; do
+          for dir in artifacts/work-*/; do
             name=$(basename "$dir")
             cp "$dir/$name" "release/$name"
           done
           cp scripts/install.sh release/install.sh
           cd release
-          sha256sum crab-* install.sh > checksums-sha256.txt
+          sha256sum work-* install.sh > checksums-sha256.txt
 
       - name: Determine prerelease
         id: meta
@@ -109,31 +109,31 @@ jobs:
             ## Install
 
             ```sh
-            curl -fsSL https://github.com/crabcity/crabcity/releases/latest/download/install.sh | bash
+            curl -fsSL https://github.com/empathic/workshop/releases/latest/download/install.sh | bash
             ```
 
             Or install a specific version:
 
             ```sh
-            curl -fsSL https://github.com/crabcity/crabcity/releases/latest/download/install.sh | bash -s -- --version ${{ github.ref_name }}
+            curl -fsSL https://github.com/empathic/workshop/releases/latest/download/install.sh | bash -s -- --version ${{ github.ref_name }}
             ```
 
             ## Downloads
 
             | Platform | Binary |
             |----------|--------|
-            | Linux x86_64 | [`crab-linux-x86_64`](https://github.com/crabcity/crabcity/releases/download/${{ github.ref_name }}/crab-linux-x86_64) |
-            | macOS (Apple Silicon) | [`crab-macos-aarch64`](https://github.com/crabcity/crabcity/releases/download/${{ github.ref_name }}/crab-macos-aarch64) |
+            | Linux x86_64 | [`work-linux-x86_64`](https://github.com/empathic/workshop/releases/download/${{ github.ref_name }}/work-linux-x86_64) |
+            | macOS (Apple Silicon) | [`work-macos-aarch64`](https://github.com/empathic/workshop/releases/download/${{ github.ref_name }}/work-macos-aarch64) |
 
             ## Manual install
 
             ```sh
             # Download the binary for your platform (adjust the asset name as needed)
-            # Linux x86_64:       crab-linux-x86_64
-            # macOS Apple Silicon: crab-macos-aarch64
-            curl -fsSL https://github.com/crabcity/crabcity/releases/download/${{ github.ref_name }}/crab-PLATFORM -o crab
-            chmod +x crab
-            mv crab ~/.local/bin/crab
+            # Linux x86_64:       work-linux-x86_64
+            # macOS Apple Silicon: work-macos-aarch64
+            curl -fsSL https://github.com/empathic/workshop/releases/download/${{ github.ref_name }}/work-PLATFORM -o work
+            chmod +x work
+            mv work ~/.local/bin/work
             ```
 
             ## SHA256 Checksums

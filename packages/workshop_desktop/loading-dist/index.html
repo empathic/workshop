@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workshop</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #002b36;
+      color: #b58900;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+      transition: opacity 0.4s ease-out;
+    }
+
+    /* CRT scanline overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.15) 2px,
+        rgba(0, 0, 0, 0.15) 4px
+      );
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    .container {
+      text-align: center;
+      z-index: 1;
+      width: 100%;
+      max-width: 540px;
+    }
+
+    h1 {
+      font-size: 2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.3em;
+      margin-bottom: 2rem;
+      text-shadow: 0 0 20px rgba(181, 137, 0, 0.5);
+    }
+
+    .log-wrapper {
+      text-align: left;
+      max-height: 200px;
+      overflow-y: auto;
+      padding: 0 1rem;
+      margin-bottom: 1.5rem;
+      /* hide scrollbar but keep scrolling */
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .log-wrapper::-webkit-scrollbar { display: none; }
+
+    .log-line {
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: #586e75;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .log-line::before {
+      content: '> ';
+      color: #073642;
+    }
+
+    .log-line:last-child {
+      color: #839496;
+    }
+
+    /* Blinking block cursor on the active line */
+    .log-line:last-child::after {
+      content: '\2588';
+      animation: blink 1s step-end infinite;
+      color: #b58900;
+      margin-left: 2px;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    .error {
+      color: #dc322f;
+      display: none;
+    }
+
+    .error.visible {
+      display: block;
+    }
+
+    .error-message {
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+      max-width: 500px;
+      word-wrap: break-word;
+    }
+
+    .error-hint {
+      color: #586e75;
+      font-size: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .retry-btn {
+      padding: 0.5rem 1.5rem;
+      background: transparent;
+      color: #b58900;
+      border: 1px solid #b58900;
+      font-family: inherit;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .retry-btn:hover {
+      background: #b58900;
+      color: #002b36;
+    }
+
+    .retry-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Workshop</h1>
+    <div class="log-wrapper" id="log-wrapper">
+    </div>
+    <div class="error" id="error">
+      <p class="error-message" id="error-message">Failed to start server</p>
+      <p class="error-hint">Check the logs for details</p>
+      <button class="retry-btn" id="retry-btn">Retry</button>
+    </div>
+  </div>
+
+  <script>
+    // API for Rust to call via window.eval()
+
+    var logWrapper = document.getElementById('log-wrapper');
+
+    function setStatus(text) {
+      var line = document.createElement('div');
+      line.className = 'log-line';
+      line.textContent = text;
+      logWrapper.appendChild(line);
+      logWrapper.scrollTop = logWrapper.scrollHeight;
+    }
+
+    function showError(message) {
+      logWrapper.style.display = 'none';
+      var errDiv = document.getElementById('error');
+      errDiv.classList.add('visible');
+      document.getElementById('error-message').textContent = message;
+    }
+
+    function fadeOutAndNavigate(url) {
+      document.body.style.opacity = '0';
+      setTimeout(function() {
+        window.location.href = url;
+      }, 400);
+    }
+
+    // Retry button — calls Tauri IPC command if available, falls back to reload
+    document.getElementById('retry-btn').addEventListener('click', function() {
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Retrying...';
+
+      // Hide error, show log again
+      document.getElementById('error').classList.remove('visible');
+      logWrapper.style.display = 'block';
+      logWrapper.innerHTML = '';
+      setStatus('Retrying...');
+
+      if (window.__TAURI_INTERNALS__) {
+        window.__TAURI_INTERNALS__.invoke('retry_server_startup').catch(function(err) {
+          showError(err || 'Retry failed');
+          btn.disabled = false;
+          btn.textContent = 'Retry';
+        });
+      } else {
+        // Fallback if Tauri IPC not available
+        location.reload();
+      }
+    });
+  </script>
+</body>
+</html>

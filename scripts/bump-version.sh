@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Bump the crab version interactively.
+# Bump the workshop version interactively.
 #
 # Reads the current version from Cargo.toml, prompts for bump type
 # (major/minor/patch) or a custom version, then updates Cargo.toml.
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CARGO_TOML="$REPO_ROOT/packages/crab_city/Cargo.toml"
+CARGO_TOML="$REPO_ROOT/packages/workshop/Cargo.toml"
 
 # Parse current version from Cargo.toml
 CURRENT=$(grep '^version = ' "$CARGO_TOML" | head -1 | sed 's/version = "\(.*\)"/\1/')
