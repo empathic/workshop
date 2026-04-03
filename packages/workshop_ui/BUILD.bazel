@@ -1,0 +1,231 @@
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@aspect_rules_jest//jest:defs.bzl", "jest_test")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//packages/workshop_ui:prettier/package_json.bzl", prettier_bin = "bin")
+load("@npm//packages/workshop_ui:svelte-check/package_json.bzl", svelte_check_bin = "bin")
+load("@npm//packages/workshop_ui:vite/package_json.bzl", vite_bin = "bin")
+
+exports_files([
+    ".npmrc",
+    "package.json",
+    "pnpm-lock.yaml",
+])
+
+npm_link_all_packages(name = "node_modules")
+
+# Inner prettier binary — not used directly, wrapped by :prettier below.
+prettier_bin.prettier_binary(
+    name = "prettier_inner",
+    data = [
+        ":node_modules/prettier-plugin-svelte",
+    ],
+    env = {"BAZEL_BINDIR": "."},
+    fixed_args = [
+        "--log-level=warn",
+    ],
+)
+
+# Wrapper that resolves the prettier-plugin-svelte path from runfiles and
+# passes it as an absolute --plugin path. Prettier 3 uses ESM import() for
+# plugin resolution which only searches node_modules up from the calling
+# module — it ignores NODE_PATH and can't find Bazel-managed dependencies.
+# Resolving to an absolute file path bypasses ESM resolution entirely.
+sh_binary(
+    name = "prettier",
+    srcs = ["prettier_wrapper.sh"],
+    data = [
+        ":node_modules/prettier-plugin-svelte",
+        ":prettier_inner",
+    ],
+    visibility = ["//tools/format:__pkg__"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
+)
+
+# Sources
+filegroup(
+    name = "srcs",
+    srcs = glob(
+        [
+            "src/**/*.svelte",
+            "src/**/*.ts",
+            "src/**/*.js",
+            "src/**/*.css",
+            "src/**/*.html",
+        ],
+        allow_empty = True,
+        exclude = ["**/*.test.ts"],
+    ),
+)
+
+filegroup(
+    name = "config",
+    srcs = [
+        "package.json",
+        "svelte.config.js",
+        "tsconfig.json",
+        "vite.config.ts",
+    ],
+)
+
+filegroup(
+    name = "static",
+    srcs = glob(
+        ["static/**"],
+        allow_empty = True,
+    ),
+)
+
+# Vite build (produces .svelte-kit/ and build/)
+vite_bin.vite(
+    name = "bundle",
+    srcs = [
+        ":config",
+        ":node_modules",
+        ":srcs",
+        ":static",
+    ],
+    args = ["build"],
+    chdir = package_name(),
+    out_dirs = [
+        ".svelte-kit",
+        "build",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# The deployable SPA - just the build/ directory
+copy_to_directory(
+    name = "workshop_ui",
+    srcs = [":bundle"],
+    include_srcs_patterns = ["build/**"],
+    replace_prefixes = {"build/": ""},
+    visibility = ["//visibility:public"],
+)
+
+# Type check - use `bazel run //packages/workshop_ui:typecheck`
+# Depends on :bundle to ensure .svelte-kit/ directory with generated types exists
+svelte_check_bin.svelte_check_binary(
+    name = "typecheck",
+    args = [
+        "--tsconfig",
+        "./tsconfig.json",
+        "--fail-on-warnings",
+    ],
+    chdir = package_name(),
+    data = [
+        ":bundle",
+        ":config",
+        ":node_modules",
+        ":srcs",
+    ],
+)
+
+# Type check as a test target - `bazel test //packages/workshop_ui:typecheck_test`
+svelte_check_bin.svelte_check_test(
+    name = "typecheck_test",
+    args = [
+        "--tsconfig",
+        "./tsconfig.json",
+        "--fail-on-warnings",
+    ],
+    chdir = package_name(),
+    data = [
+        ":bundle",
+        ":config",
+        ":node_modules",
+        ":srcs",
+    ],
+)
+
+# bazel run //packages/workshop_ui:dev
+vite_bin.vite_binary(
+    name = "dev",
+    args = [
+        "dev",
+        "--host",
+    ],
+    chdir = package_name(),
+    data = [
+        ":config",
+        ":node_modules",
+        ":srcs",
+        ":static",
+    ],
+)
+
+# bazel run //packages/workshop_ui:preview
+vite_bin.vite_binary(
+    name = "preview",
+    args = ["preview"],
+    chdir = package_name(),
+    data = [
+        ":bundle",
+        ":node_modules",
+    ],
+)
+
+# =============================================================================
+# Tests - Jest with ts-jest for TypeScript
+# =============================================================================
+
+# Compile test sources with ts_project
+ts_project(
+    name = "test_lib",
+    srcs = [
+        "src/lib/utils/authGuard.test.ts",
+        "src/lib/utils/authGuard.ts",
+        "src/lib/utils/draft-map.test.ts",
+        "src/lib/utils/draft-map.ts",
+        "src/lib/utils/fileLinkMatch.test.ts",
+        "src/lib/utils/fileLinkMatch.ts",
+        "src/lib/utils/fuzzy.test.ts",
+        "src/lib/utils/fuzzy.ts",
+        "src/lib/utils/noise.test.ts",
+        "src/lib/utils/noise.ts",
+        "src/lib/utils/pane-content.test.ts",
+        "src/lib/utils/pane-content.ts",
+        "src/lib/utils/project-id.test.ts",
+        "src/lib/utils/project-id.ts",
+        "src/lib/utils/project-order.test.ts",
+        "src/lib/utils/project-order.ts",
+        "src/lib/utils/server-config-utils.test.ts",
+        "src/lib/utils/server-config-utils.ts",
+        "src/lib/utils/tool-registry.test.ts",
+        "src/lib/utils/tool-registry.ts",
+        "src/lib/utils/virtualList.test.ts",
+        "src/lib/utils/virtualList.ts",
+        "src/lib/utils/wrapLines.test.ts",
+        "src/lib/utils/wrapLines.ts",
+    ],
+    declaration = True,
+    declaration_map = True,
+    out_dir = "dist-test",
+    root_dir = "src/lib/utils",
+    source_map = True,
+    transpiler = "tsc",
+    tsconfig = "tsconfig.test.json",
+    deps = [
+        ":node_modules/@types/jest",
+        ":node_modules/@types/node",
+    ],
+)
+
+# bazel test //packages/workshop_ui:unit_tests
+jest_test(
+    name = "unit_tests",
+    auto_configure_reporters = False,
+    config = "jest.config.cjs",
+    data = [
+        "package.json",
+        ":node_modules/@jest/globals",
+        ":node_modules/jest",
+        ":node_modules/jest-cli",
+        ":node_modules/jest-junit",
+        ":test_lib",
+    ],
+    node_modules = ":node_modules",
+    node_options = ["--experimental-vm-modules"],
+    patch_node_fs = False,
+    run_in_band = True,
+)

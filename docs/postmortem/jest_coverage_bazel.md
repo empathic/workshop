@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-Running `bazel coverage //packages/crab_city_ui:unit_tests` produced **0% coverage
+Running `bazel coverage //packages/workshop_ui:unit_tests` produced **0% coverage
 across all metrics** despite all 156 tests passing. Running the same test binary
 manually from the execroot produced 100% coverage. The coverage data was being
 silently discarded.
@@ -20,17 +20,17 @@ filesystem for each test invocation:
 ```
 execroot/
   _main/
-    packages/crab_city_ui/          # symlinks to source tree (source files)
+    packages/workshop_ui/          # symlinks to source tree (source files)
     bazel-out/
       darwin_arm64-fastbuild/
         bin/
-          packages/crab_city_ui/
+          packages/workshop_ui/
             dist-test/              # ts_project compiled output (.js, .js.map)
             unit_tests_/
               unit_tests            # the test binary (shell wrapper)
               unit_tests.runfiles/
                 _main/
-                  packages/crab_city_ui/
+                  packages/workshop_ui/
                     dist-test/
                       fileLinkMatch.js      -> ../../../../dist-test/fileLinkMatch.js  (symlink to bin dir)
                       fileLinkMatch.js.map  -> ../../../../dist-test/fileLinkMatch.js.map
@@ -42,9 +42,9 @@ There are three important directory trees:
 
 | Tree | Path | Contains |
 |------|------|----------|
-| **Source tree** | `execroot/_main/packages/crab_city_ui/` | Original `.ts` files (symlinks to workspace) |
-| **Bin dir** | `execroot/_main/bazel-out/.../bin/packages/crab_city_ui/` | `ts_project` outputs (`.js`, `.js.map`) |
-| **Runfiles** | `.../unit_tests.runfiles/_main/packages/crab_city_ui/` | Symlinks to bin dir outputs |
+| **Source tree** | `execroot/_main/packages/workshop_ui/` | Original `.ts` files (symlinks to workspace) |
+| **Bin dir** | `execroot/_main/bazel-out/.../bin/packages/workshop_ui/` | `ts_project` outputs (`.js`, `.js.map`) |
+| **Runfiles** | `.../unit_tests.runfiles/_main/packages/workshop_ui/` | Symlinks to bin dir outputs |
 
 When the **sandbox** is enabled (`darwin-sandbox` strategy), Bazel adds a fourth
 layer: the entire execroot is copied/symlinked into an ephemeral sandbox
@@ -127,7 +127,7 @@ Jest's `rootDir` defaults to the directory containing the config file. The confi
 file lives in the **runfiles** tree:
 
 ```
-rootDir = .../unit_tests.runfiles/_main/packages/crab_city_ui/
+rootDir = .../unit_tests.runfiles/_main/packages/workshop_ui/
 ```
 
 But Node's `require()` / `vm.SourceTextModule` resolve symlinks when loading
@@ -140,16 +140,16 @@ runfiles/.../dist-test/fileLinkMatch.js  →  bin/.../dist-test/fileLinkMatch.js
 V8 records coverage against the **resolved (real) path**:
 
 ```
-V8 URL = file:///...bazel-out/darwin_arm64-fastbuild/bin/packages/crab_city_ui/dist-test/fileLinkMatch.js
+V8 URL = file:///...bazel-out/darwin_arm64-fastbuild/bin/packages/workshop_ui/dist-test/fileLinkMatch.js
 ```
 
 The `startsWith` check fails because the V8 URL starts with the **bin dir** path,
 not the **runfiles** path:
 
 ```
-bin/.../packages/crab_city_ui/dist-test/fileLinkMatch.js
+bin/.../packages/workshop_ui/dist-test/fileLinkMatch.js
                   does NOT startWith
-runfiles/_main/packages/crab_city_ui/
+runfiles/_main/packages/workshop_ui/
 ```
 
 **Every single coverage entry is filtered out. Result: 0%.**
@@ -260,7 +260,7 @@ so `url.startsWith(rootDir)` passes — even inside Bazel's sandbox.
 The environment variables are provided by `aspect_rules_js`:
 - `JS_BINARY__EXECROOT`: absolute path to the Bazel execroot (sandbox path when sandboxed)
 - `JS_BINARY__BINDIR`: relative path like `bazel-out/darwin_arm64-fastbuild/bin`
-- `JS_BINARY__PACKAGE`: the Bazel package, e.g. `packages/crab_city_ui`
+- `JS_BINARY__PACKAGE`: the Bazel package, e.g. `packages/workshop_ui`
 - `RUNFILES`: absolute path to the runfiles root
 - `JS_BINARY__WORKSPACE`: workspace name, e.g. `_main`
 
@@ -322,9 +322,9 @@ returns the directory unchanged — it doesn't chase the symlinks of its content
 
 ```
 sandbox/darwin-sandbox/7292/execroot/_main/
-  bazel-out/.../bin/packages/crab_city_ui/     ← real directory (realpathSync = self)
+  bazel-out/.../bin/packages/workshop_ui/     ← real directory (realpathSync = self)
     unit_tests_/unit_tests.runfiles/_main/
-      packages/crab_city_ui/
+      packages/workshop_ui/
         dist-test/
           fileLinkMatch.js                     ← symlink → real execroot
 ```
@@ -335,11 +335,11 @@ the real execroot prefix, then extract the bin dir path from it:
 ```javascript
 const probeFile = path.join(runfilesBase, workspace, pkg, 'jest.config.cjs');
 const realProbe = fs.realpathSync(probeFile);
-// realProbe: /real/execroot/_main/bazel-out/.../bin/packages/crab_city_ui/
-//            unit_tests_/unit_tests.runfiles/_main/packages/crab_city_ui/jest.config.cjs
-const idx = realProbe.indexOf(binSuffix);  // binSuffix = "bazel-out/.../bin/packages/crab_city_ui"
+// realProbe: /real/execroot/_main/bazel-out/.../bin/packages/workshop_ui/
+//            unit_tests_/unit_tests.runfiles/_main/packages/workshop_ui/jest.config.cjs
+const idx = realProbe.indexOf(binSuffix);  // binSuffix = "bazel-out/.../bin/packages/workshop_ui"
 realBinDir = realProbe.substring(0, idx + binSuffix.length);
-// realBinDir: /real/execroot/_main/bazel-out/.../bin/packages/crab_city_ui
+// realBinDir: /real/execroot/_main/bazel-out/.../bin/packages/workshop_ui
 ```
 
 This gives us the canonical path that V8 will use for file URLs, regardless of
@@ -398,10 +398,10 @@ bin dir path (100%) and once from the runfiles path (0%). This happened because
 the runfiles directory is a subdirectory of the bin dir:
 
 ```
-<bindir>/packages/crab_city_ui/unit_tests_/unit_tests.runfiles/_main/packages/crab_city_ui/dist-test/
+<bindir>/packages/workshop_ui/unit_tests_/unit_tests.runfiles/_main/packages/workshop_ui/dist-test/
 ```
 
-Since `rootDir` is `<bindir>/packages/crab_city_ui/`, both paths pass the
+Since `rootDir` is `<bindir>/packages/workshop_ui/`, both paths pass the
 `startsWith(rootDir)` check. The runfiles copies were loaded by the haste map
 module but never executed (the actual execution used the resolved bin dir paths),
 so they reported 0%.
@@ -543,7 +543,7 @@ inspect or follow its contents' symlinks. Only `realpathSync` on a *file* (which
 is an actual symlink) resolves to the real execroot.
 
 ```
-realpathSync("/sandbox/.../bin/packages/crab_city_ui")           → same path (real dir)
+realpathSync("/sandbox/.../bin/packages/workshop_ui")           → same path (real dir)
 realpathSync("/sandbox/.../bin/.../runfiles/.../jest.config.cjs") → /real/execroot/...  (symlink)
 ```
 

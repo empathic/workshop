@@ -2,7 +2,7 @@
 
 Standalone HTTP-controlled TTY wrapper. Wraps an interactive program (shell, Claude, etc.) in a PTY and exposes it over HTTP and WebSocket.
 
-This package is **independent** from `crab_city` — it can be built and run on its own.
+This package is **independent** from `workshop` — it can be built and run on its own.
 
 ## Usage
 

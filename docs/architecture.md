@@ -1,6 +1,6 @@
 # Architecture
 
-This document covers the internal design of Crab City for contributors and curious users.
+This document covers the internal design of Workshop for contributors and curious users.
 
 ## Three-Layer Architecture
 
@@ -32,14 +32,14 @@ This document covers the internal design of Crab City for contributors and curio
 ## Package Dependency Graph
 
 ```
-crab_city (server + CLI + TUI)
+workshop (server + CLI + TUI)
 ├── claude_convo      (conversation log reader)
 ├── pty_manager        (PTY lifecycle)
 └── virtual_terminal   (screen buffer + viewport negotiation)
 
-tty_wrapper            (standalone HTTP-controlled PTY — not depended on by crab_city)
-crab_city_ui           (SvelteKit frontend — embedded via rust-embed feature flag)
-crab_city_desktop      (Tauri native desktop app — discovers/starts daemon, loads web UI)
+tty_wrapper            (standalone HTTP-controlled PTY — not depended on by workshop)
+workshop_ui           (SvelteKit frontend — embedded via rust-embed feature flag)
+workshop_desktop      (Tauri native desktop app — discovers/starts daemon, loads web UI)
 ```
 
 ## Instance Lifecycle
@@ -47,7 +47,7 @@ crab_city_desktop      (Tauri native desktop app — discovers/starts daemon, lo
 Instances flow through: **Created → Running → Stopped**.
 
 ```
-crab create / web UI "New Instance"
+workshop create / web UI "New Instance"
         │
         ▼
   instance_manager.rs
@@ -150,13 +150,13 @@ SQLite via sqlx with embedded migrations (`db.rs`).
 
 ### Config
 
-- **Location**: `~/.crabcity/crabcity.db` (configurable via `--data-dir`)
+- **Location**: `~/.workshop/workshop.db` (configurable via `--data-dir`)
 - **Migrations**: Embedded in the binary, run automatically on startup
 - **Compile-time checked queries**: Uses `sqlx::query!` / `sqlx::query_as!`
 
 ## Auth
 
-Auth middleware has a **loopback bypass** — CLI/TUI requests to `127.0.0.1` work without credentials. This means your local `crab` commands never need a token, even when auth is enabled for remote users.
+Auth middleware has a **loopback bypass** — CLI/TUI requests to `127.0.0.1` work without credentials. This means your local `workshop` commands never need a token, even when auth is enabled for remote users.
 
 For remote connections, auth uses JWT sessions with a configurable TTL. The first user to register becomes the admin.
 
@@ -164,7 +164,7 @@ For remote connections, auth uses JWT sessions with a configurable TTL. The firs
 
 Multiple clients share a single PTY per instance:
 
-- `virtual_terminal` maintains the screen buffer and negotiates dimensions as `min(all active viewports)`. On resize, the visible screen is saved, a fresh `vt100::Parser` is created at the new dimensions (clearing scrollback), and the visible content is restored. The PTY program's SIGWINCH redraw then rebuilds scrollback at the correct width — no duplicates, no virtual trim tracking. Both the server-side `VirtualTerminal::resize()` and the TUI client use this approach. The `recorder` submodule captures PTY output/input/resize events with microsecond timestamps for golden-test replay (enabled via `CRAB_CITY_VT_RECORD` env var)
+- `virtual_terminal` maintains the screen buffer and negotiates dimensions as `min(all active viewports)`. On resize, the visible screen is saved, a fresh `vt100::Parser` is created at the new dimensions (clearing scrollback), and the visible content is restored. The PTY program's SIGWINCH redraw then rebuilds scrollback at the correct width — no duplicates, no virtual trim tracking. Both the server-side `VirtualTerminal::resize()` and the TUI client use this approach. The `recorder` submodule captures PTY output/input/resize events with microsecond timestamps for golden-test replay (enabled via `WORKSHOP_VT_RECORD` env var)
 - `websocket_proxy.rs` manages the fan-out from one PTY to N WebSocket clients
 
 ## Web Terminal (Client-Side)

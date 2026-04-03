@@ -1,0 +1,6 @@
+{
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "cd ../workshop_ui && pnpm dev"
+  }
+}

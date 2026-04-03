@@ -1,6 +1,6 @@
 # Operations Guide
 
-Running and maintaining a Crab City server.
+Running and maintaining a Workshop server.
 
 ## Endpoints
 
@@ -55,19 +55,19 @@ curl http://localhost:PORT/metrics
 
 ```sh
 # Default
-RUST_LOG=crab_city=info cargo run -p crab_city -- server
+RUST_LOG=workshop=info cargo run -p workshop -- server
 
 # Debug
-RUST_LOG=crab_city=debug cargo run -p crab_city -- server
+RUST_LOG=workshop=debug cargo run -p workshop -- server
 
 # Specific modules
-RUST_LOG=crab_city::ws=debug,crab_city::inference=trace cargo run -p crab_city -- server
+RUST_LOG=workshop::ws=debug,workshop::inference=trace cargo run -p workshop -- server
 ```
 
 Or use the `--debug` flag for debug-level logging:
 
 ```sh
-crab server --debug
+work server --debug
 ```
 
 ### Key Log Messages
@@ -82,12 +82,12 @@ crab server --debug
 
 ## Data Directory
 
-All runtime data lives in `~/.crabcity/` (override with `--data-dir`):
+All runtime data lives in `~/.workshop/` (override with `--data-dir`):
 
 ```
-~/.crabcity/
+~/.workshop/
 ├── config.toml          Configuration file
-├── crabcity.db          SQLite database
+├── workshop.db          SQLite database
 ├── exports/             Exported conversations
 └── logs/                Server logs
 ```
@@ -96,13 +96,13 @@ All runtime data lives in `~/.crabcity/` (override with `--data-dir`):
 
 ### Location
 
-Default: `~/.crabcity/crabcity.db` (SQLite)
+Default: `~/.workshop/workshop.db` (SQLite)
 
 ### Backup
 
 ```sh
 # Manual backup
-cp ~/.crabcity/crabcity.db ~/.crabcity/backup-$(date +%Y%m%d).db
+cp ~/.workshop/workshop.db ~/.workshop/backup-$(date +%Y%m%d).db
 
 # Using API
 curl -X POST http://localhost:PORT/api/admin/backup
@@ -112,17 +112,17 @@ curl -X POST http://localhost:PORT/api/admin/backup
 
 ```sh
 # With confirmation prompt
-crab server --reset-db
+work server --reset-db
 ```
 
 ### Import Conversations
 
 ```sh
 # Import all Claude Code conversations
-crab server --import-all
+work server --import-all
 
 # Import from specific project
-crab server --import-from /path/to/project
+work server --import-from /path/to/project
 
 # Via API (while running)
 curl -X POST http://localhost:PORT/api/admin/import \
@@ -144,11 +144,11 @@ Recommended shutdown timeout: 30 seconds.
 
 ```sh
 # Graceful stop
-kill -TERM $(pgrep crab_city)
+kill -TERM $(pgrep work)
 
 # Wait for clean shutdown, then force if needed
 sleep 30
-kill -9 $(pgrep crab_city)
+kill -9 $(pgrep work)
 ```
 
 ## Error Scenarios and Recovery

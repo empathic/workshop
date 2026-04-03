@@ -1,20 +1,20 @@
 [workspace]
 
 members = [
-    "packages/crab_city",
-    "packages/crab_city_desktop",
-    "packages/crab_city_ui/crate",
+    "packages/workshop",
+    "packages/workshop_desktop",
+    "packages/workshop_ui/crate",
     "packages/pty_manager",
     "packages/tty_wrapper",
     "packages/virtual_terminal",
 ]
-# crab_city_ui/crate requires CRAB_CITY_UI_PATH env var pointing to SvelteKit build output.
-# crab_city_desktop requires Tauri system dependencies (WebKit, etc.).
+# workshop_ui/crate requires WORKSHOP_UI_PATH env var pointing to SvelteKit build output.
+# workshop_desktop requires Tauri system dependencies (WebKit, etc.).
 # Exclude both from default `cargo build` to avoid build failures. Build with:
-#   CRAB_CITY_UI_PATH=packages/crab_city_ui/build cargo build -p crab_city_ui
-#   cargo check -p crab_city_desktop
+#   WORKSHOP_UI_PATH=packages/workshop_ui/build cargo build -p workshop_ui
+#   cargo check -p workshop_desktop
 default-members = [
-    "packages/crab_city",
+    "packages/workshop",
     "packages/pty_manager",
     "packages/tty_wrapper",
     "packages/virtual_terminal",

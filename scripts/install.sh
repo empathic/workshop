@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="crabcity/crabcity"
+REPO="empathic/workshop"
 INSTALL_DIR="${HOME}/.local/bin"
 VERSION="latest"
 
@@ -9,7 +9,7 @@ usage() {
   cat <<EOF
 Usage: install.sh [OPTIONS]
 
-Install the crab binary.
+Install the work binary.
 
 Options:
   --version VERSION  Install a specific version (e.g. v0.1.0). Default: latest
@@ -48,7 +48,7 @@ if [[ "$PLATFORM" == "macos" ]]; then
   ARCH="aarch64"
 fi
 
-ASSET="crab-${PLATFORM}-${ARCH}"
+ASSET="work-${PLATFORM}-${ARCH}"
 
 # Resolve version
 if [[ "$VERSION" == "latest" ]]; then
@@ -98,11 +98,11 @@ echo "Checksum verified."
 
 # Install
 mkdir -p "$INSTALL_DIR"
-rm -f "${INSTALL_DIR}/crab"
-cp "${TMPDIR}/${ASSET}" "${INSTALL_DIR}/crab"
-chmod +x "${INSTALL_DIR}/crab"
+rm -f "${INSTALL_DIR}/work"
+cp "${TMPDIR}/${ASSET}" "${INSTALL_DIR}/work"
+chmod +x "${INSTALL_DIR}/work"
 
-echo "Installed crab to ${INSTALL_DIR}/crab"
+echo "Installed work to ${INSTALL_DIR}/work"
 
 # Check PATH
 if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then

@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   quality-gates:
-    runs-on: ubuntu-latest
+    runs-on: ci_runner
     steps:
       - uses: actions/checkout@v4
 

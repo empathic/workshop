@@ -2,7 +2,7 @@
 
 ## Problem
 
-When Claude starts up slowly, Crab City looks broken. The TUI shows a blank terminal. The web UI shows an empty conversation view. There's no indication that anything is happening, no hint about what to do, and no way to productively use the wait time. Messages typed during startup are silently lost or ignored.
+When Claude starts up slowly, Workshop looks broken. The TUI shows a blank terminal. The web UI shows an empty conversation view. There's no indication that anything is happening, no hint about what to do, and no way to productively use the wait time. Messages typed during startup are silently lost or ignored.
 
 The root cause is a state gap: the `ClaudeState` enum jumps straight to `Idle`, but "Idle" means "ready and waiting for input." During startup, the instance is *not* idle — it's booting. This state is real but unrepresentable in the model, so it's invisible in every view.
 
@@ -19,7 +19,7 @@ Every piece of this design says the same thing: **the system is in control, and 
 Add a `Starting` variant to `ClaudeState`:
 
 ```rust
-// packages/crab_city/src/inference/state.rs
+// packages/workshop/src/inference/state.rs
 pub enum ClaudeState {
     Starting,  // NEW: PTY spawned, Claude not yet at prompt
     Idle,
@@ -40,11 +40,11 @@ pub enum ClaudeState {
 **Transition trigger:** The inference manager already watches terminal output via `StateSignal::TerminalOutput`. Add a heuristic: if the instance has `Starting` state and we see Claude prompt patterns or an assistant conversation entry, transition to `Idle`. The existing signal path handles this naturally.
 
 **Files:**
-- `packages/crab_city/src/inference/state.rs` — add variant, update `is_active()`, `Default` (keep as `Idle`, set `Starting` explicitly at creation)
-- `packages/crab_city/src/instance_actor.rs` — set initial `claude_state: Some(ClaudeState::Starting)`
-- `packages/crab_city/src/inference/manager.rs` — add `Starting` → `Idle` transition on first prompt/output
-- `packages/crab_city/src/ws/protocol.rs` — serde tests for new variant
-- `packages/crab_city_ui/src/lib/types.ts` — add `{ type: 'Starting' }` to `ClaudeState` union
+- `packages/workshop/src/inference/state.rs` — add variant, update `is_active()`, `Default` (keep as `Idle`, set `Starting` explicitly at creation)
+- `packages/workshop/src/instance_actor.rs` — set initial `claude_state: Some(ClaudeState::Starting)`
+- `packages/workshop/src/inference/manager.rs` — add `Starting` → `Idle` transition on first prompt/output
+- `packages/workshop/src/ws/protocol.rs` — serde tests for new variant
+- `packages/workshop_ui/src/lib/types.ts` — add `{ type: 'Starting' }` to `ClaudeState` union
 
 ### Layer 2: Phased Progress (Web)
 
@@ -59,11 +59,11 @@ The frontend infers boot phases from existing signals — no enum bloat needed:
 
 Each line appears as its milestone is reached. The visual shifts from "is it broken?" to "I can see where it is."
 
-**ConversationView** (`packages/crab_city_ui/src/lib/components/ConversationView.svelte`): Replace the empty-state "Start a conversation" message with a boot progress panel when `claude_state?.type === 'Starting'`. Styled per the CRT brand book — amber phosphor, uppercase monospace, adapting the aesthetic that `BootSequence.svelte` already established. But this one is *real*, not cosmetic. Each checkpoint lights up as it's reached.
+**ConversationView** (`packages/workshop_ui/src/lib/components/ConversationView.svelte`): Replace the empty-state "Start a conversation" message with a boot progress panel when `claude_state?.type === 'Starting'`. Styled per the CRT brand book — amber phosphor, uppercase monospace, adapting the aesthetic that `BootSequence.svelte` already established. But this one is *real*, not cosmetic. Each checkpoint lights up as it's reached.
 
-**Sidebar** (`packages/crab_city_ui/src/lib/components/sidebar/InstanceItem.svelte`): The `stateInfo` label shows `STARTING` with a slow rhythmic pulse (distinct from the fast flicker of active work). Other team members see "this instance is starting up" — ambient awareness, no action needed.
+**Sidebar** (`packages/workshop_ui/src/lib/components/sidebar/InstanceItem.svelte`): The `stateInfo` label shows `STARTING` with a slow rhythmic pulse (distinct from the fast flicker of active work). Other team members see "this instance is starting up" — ambient awareness, no action needed.
 
-**MainHeader** (`packages/crab_city_ui/src/lib/components/main-view/MainHeader.svelte`): The baud panel shows `BOOT` verb during `Starting` state with the baud meter in a slow pulse pattern.
+**MainHeader** (`packages/workshop_ui/src/lib/components/main-view/MainHeader.svelte`): The baud panel shows `BOOT` verb during `Starting` state with the baud meter in a slow pulse pattern.
 
 ### Layer 3: The Input Bar Stays Hot
 
@@ -77,7 +77,7 @@ Each line appears as its milestone is reached. The visual shifts from "is it bro
 
 This turns dead wait time into **planning time**. You're not waiting for Claude — you're *briefing* Claude.
 
-**File:** `packages/crab_city_ui/src/lib/components/MessageInput.svelte`
+**File:** `packages/workshop_ui/src/lib/components/MessageInput.svelte`
 
 ### Layer 4: Messages Queue as Tasks
 
@@ -95,8 +95,8 @@ This means:
 - When Claude reaches `Idle`, tasks dispatch in `sort_order` using the existing `TaskDispatch` machinery.
 
 **Files:**
-- `packages/crab_city_ui/src/lib/stores/ws-handlers.ts` — on `StateChange` to `Idle`, flush pending tasks
-- `packages/crab_city_ui/src/lib/stores/instances.ts` — wire task creation on submit during `Starting`
+- `packages/workshop_ui/src/lib/stores/ws-handlers.ts` — on `StateChange` to `Idle`, flush pending tasks
+- `packages/workshop_ui/src/lib/stores/instances.ts` — wire task creation on submit during `Starting`
 - Existing task API (`handlers/tasks.rs`, `repository/tasks.rs`) — no changes needed
 
 ### Layer 5: Time-Aware Messaging
@@ -137,8 +137,8 @@ When state transitions to `Idle`, the bar updates with a brief reverse-video fla
 The status bar subscribes to `StateChange` messages via the instance WebSocket — the attach loop already has a `select!` handling WebSocket frames.
 
 **Files:**
-- `packages/crab_city/src/cli/attach.rs` — add status bar overlay, subscribe to state changes
-- `packages/crab_city/src/cli/terminal.rs` — extend `TerminalGuard` with status bar support
+- `packages/workshop/src/cli/attach.rs` — add status bar overlay, subscribe to state changes
+- `packages/workshop/src/cli/terminal.rs` — extend `TerminalGuard` with status bar support
 - Uses existing compositor `Anchor::BottomLeft` + `Attrs` with `REVERSED`/`BOLD` modifiers (solarized-safe)
 
 ### Layer 7: The Seamless Transition

@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Crab City uses layered configuration. Each layer overrides the one below it:
+Workshop uses layered configuration. Each layer overrides the one below it:
 
 ```
 CLI flags  >  env vars  >  config.toml  >  profile defaults  >  struct defaults
@@ -8,7 +8,7 @@ CLI flags  >  env vars  >  config.toml  >  profile defaults  >  struct defaults
 
 ## CLI Options
 
-### `crab server`
+### `work server`
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -18,7 +18,7 @@ CLI flags  >  env vars  >  config.toml  >  profile defaults  >  struct defaults
 | `--instance-base-port <PORT>` | Base port for instances | `9000` |
 | `--default-command <CMD>` | Default command for new instances | — |
 | `-d, --debug` | Enable debug logging | `false` |
-| `--data-dir <PATH>` | Custom data directory | `~/.crabcity` |
+| `--data-dir <PATH>` | Custom data directory | `~/.workshop` |
 | `--reset-db` | Reset database (with confirmation prompt) | — |
 | `--import-all` | Import all existing Claude conversations on startup | — |
 | `--import-from <PATH>` | Import conversations from a specific project directory | — |
@@ -27,14 +27,14 @@ CLI flags  >  env vars  >  config.toml  >  profile defaults  >  struct defaults
 
 | Command | Description |
 |---------|-------------|
-| `crab` | Start daemon + open TUI picker (default) |
-| `crab attach <name-or-id>` | Attach to an instance by name or ID prefix |
-| `crab list [--json]` | List running instances |
-| `crab kill <name-or-id>` | Stop a specific instance |
-| `crab kill-server` | Stop the daemon and all instances |
-| `crab auth enable` | Enable authentication |
-| `crab auth disable` | Disable authentication |
-| `crab auth status` | Show current auth status |
+| `work` | Start daemon + open TUI picker (default) |
+| `work attach <name-or-id>` | Attach to an instance by name or ID prefix |
+| `work list [--json]` | List running instances |
+| `work kill <name-or-id>` | Stop a specific instance |
+| `work kill-server` | Stop the daemon and all instances |
+| `work auth enable` | Enable authentication |
+| `work auth disable` | Disable authentication |
+| `work auth status` | Show current auth status |
 
 ## Profiles
 
@@ -56,7 +56,7 @@ Profiles set sensible defaults for common deployment scenarios. Specify with `--
 
 ## Config File
 
-Location: `~/.crabcity/config.toml`
+Location: `~/.workshop/config.toml`
 
 Full annotated reference:
 
@@ -93,42 +93,42 @@ scrollback_lines = 10000
 
 ## Environment Variables
 
-Every config field can be set via environment variable using the `CRAB_` prefix with `__` (double underscore) as the section separator.
+Every config field can be set via environment variable using the `WORKSHOP_` prefix with `__` (double underscore) as the section separator.
 
 | Variable | Config equivalent | Example |
 |----------|-------------------|---------|
-| `CRAB_PROFILE` | `profile` | `tunnel` |
-| `CRAB_AUTH__ENABLED` | `auth.enabled` | `true` |
-| `CRAB_AUTH__SESSION_TTL_SECS` | `auth.session_ttl_secs` | `604800` |
-| `CRAB_AUTH__ALLOW_REGISTRATION` | `auth.allow_registration` | `true` |
-| `CRAB_SERVER__HOST` | `server.host` | `0.0.0.0` |
-| `CRAB_SERVER__PORT` | `server.port` | `8080` |
-| `CRAB_SERVER__MAX_BUFFER_MB` | `server.max_buffer_mb` | `50` |
-| `CRAB_SERVER__MAX_HISTORY_KB` | `server.max_history_kb` | `128` |
-| `CRAB_SERVER__HANG_TIMEOUT_SECS` | `server.hang_timeout_secs` | `600` |
-| `CRAB_SERVER__SCROLLBACK_LINES` | `server.scrollback_lines` | `10000` |
-| `CRAB_SERVER__VT_RECORD_DIR` | `server.vt_record_dir` | — |
+| `WORKSHOP_PROFILE` | `profile` | `tunnel` |
+| `WORKSHOP_AUTH__ENABLED` | `auth.enabled` | `true` |
+| `WORKSHOP_AUTH__SESSION_TTL_SECS` | `auth.session_ttl_secs` | `604800` |
+| `WORKSHOP_AUTH__ALLOW_REGISTRATION` | `auth.allow_registration` | `true` |
+| `WORKSHOP_SERVER__HOST` | `server.host` | `0.0.0.0` |
+| `WORKSHOP_SERVER__PORT` | `server.port` | `8080` |
+| `WORKSHOP_SERVER__MAX_BUFFER_MB` | `server.max_buffer_mb` | `50` |
+| `WORKSHOP_SERVER__MAX_HISTORY_KB` | `server.max_history_kb` | `128` |
+| `WORKSHOP_SERVER__HANG_TIMEOUT_SECS` | `server.hang_timeout_secs` | `600` |
+| `WORKSHOP_SERVER__SCROLLBACK_LINES` | `server.scrollback_lines` | `10000` |
+| `WORKSHOP_SERVER__VT_RECORD_DIR` | `server.vt_record_dir` | — |
 
 Legacy environment variables (still supported):
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CRAB_CITY_MAX_BUFFER_MB` | Maximum output buffer per instance (MB) | `1` |
-| `CRAB_CITY_MAX_HISTORY_KB` | Maximum history bytes sent on focus switch (KB) | `64` |
-| `CRAB_CITY_HANG_TIMEOUT_SECS` | Hang detection timeout (0 = disabled) | `300` |
+| `WORKSHOP_MAX_BUFFER_MB` | Maximum output buffer per instance (MB) | `1` |
+| `WORKSHOP_MAX_HISTORY_KB` | Maximum history bytes sent on focus switch (KB) | `64` |
+| `WORKSHOP_HANG_TIMEOUT_SECS` | Hang detection timeout (0 = disabled) | `300` |
 
 ## Conversation Import
 
-Crab City can import Claude conversation logs from `~/.claude/projects/` into its local SQLite database for full-text search and browsing.
+Workshop can import Claude conversation logs from `~/.claude/projects/` into its local SQLite database for full-text search and browsing.
 
 ### On startup
 
 ```sh
 # Import all conversations from all projects
-crab server --import-all
+work server --import-all
 
 # Import from a specific project directory
-crab server --import-from /path/to/project
+work server --import-from /path/to/project
 ```
 
 ### At runtime (via API)
@@ -144,12 +144,12 @@ The web UI provides a searchable notebook-style conversation viewer with syntax-
 
 ## Data Directory
 
-All runtime data lives in `~/.crabcity/` (override with `--data-dir`):
+All runtime data lives in `~/.workshop/` (override with `--data-dir`):
 
 ```
-~/.crabcity/
+~/.workshop/
 ├── config.toml          Configuration file
-├── crabcity.db          SQLite database
+├── workshop.db          SQLite database
 ├── exports/             Exported conversations
 └── logs/                Server logs
 ```
@@ -162,17 +162,17 @@ The web UI is a SvelteKit application that can be embedded into the Rust binary 
 
 ```sh
 # Build the SvelteKit app
-cd packages/crab_city_ui
+cd packages/workshop_ui
 pnpm install
 pnpm build
 cd ../..
 
 # Build the Rust binary with embedded UI
-CRAB_CITY_UI_PATH=packages/crab_city_ui/build cargo build -p crab_city --features embedded-ui
+WORKSHOP_UI_PATH=packages/workshop_ui/build cargo build -p workshop --features embedded-ui
 ```
 
 Or use Bazel, which handles everything automatically:
 
 ```sh
-bazel build //packages/crab_city:crab
+bazel build //packages/workshop:work
 ```

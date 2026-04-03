@@ -1,204 +1,131 @@
-# Crab City
+# Workshop
 
-Run multiple Claude Code instances. Share them with your team. Search everything.
+Collaborative Claude Code for teams.
 
-<!-- TODO: add screenshot -->
+Run multiple Claude instances, share them with teammates in real time, and
+search across every conversation you've ever had — from the terminal or the
+browser.
 
-## Why Crab City?
-
-**Before Crab City:**
-
-- You want to run several Claude instances at once (one per task, one per repo)
-  but managing them is a mess
-- You want a teammate to see what Claude is doing on your machine, or pick up
-  where you left off
-- You want to search across all your past Claude conversations, not dig through
-  JSONL files
-
-Crab City fixes all of that. It's a local server that manages Claude Code
-instances, multiplexes their terminals, and gives you a TUI and web dashboard to
-drive everything.
+<!-- TODO: screenshot / demo GIF -->
 
 ## Install
 
 ```sh
-curl -fsSL https://github.com/crabcity/crabcity/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/empathic-ai/workshop/main/scripts/install.sh | bash
 ```
 
-This installs the `crab` binary to `~/.local/bin`. You need [Claude
-Code](https://docs.anthropic.com/en/docs/claude-code) installed separately.
+Installs the `work` binary to `~/.local/bin`. Requires
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-To build from source instead, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Quick Start
-
-**Launch the TUI picker** (starts a background daemon automatically):
+## Get Started
 
 ```sh
-crab
+work
 ```
 
-This opens a terminal UI where you create and attach to Claude Code instances.
-Each instance gets its own PTY — create as many as you want.
+A TUI opens where you create and switch between Claude Code sessions. Press
+`Ctrl+]` to move between sessions and the overview. A background daemon keeps
+everything running — close the TUI and your sessions stay alive.
 
-To switch between Claude and the picker/overview TUI, just type `CTRL+]`.
-
-**Or start the server directly** for the web UI:
+For the web UI:
 
 ```sh
-crab server
+work server
 ```
 
-Then open `http://127.0.0.1:<port>` for the full dashboard: live terminal,
-conversation viewer, task board, and instance management.
+Then open the URL it prints. You get live terminals, a conversation viewer,
+task board, and fleet overview — all in the browser. The CLI and web UI talk
+to the same daemon, so use whichever you prefer.
 
-With a local server, just run `crab` to attach.
+## Invite Your Team
 
-To switch between Claude and the picker/overview TUI, just type `CTRL+]`.
-
-## Common Workflows
-
-### Managing instances from the CLI
+Workshop is built for collaboration. To share over a tunnel:
 
 ```sh
-crab list                        # show running instances
-crab attach swift-amber-falcon   # attach to an instance by name
-crab kill <name-or-id>           # stop an instance
-crab kill-server                 # stop the daemon and all instances
+work server --profile tunnel
+work auth enable
 ```
 
-### Searching past conversations
-
-Crab City imports your Claude conversation history into a searchable SQLite database:
+Or on your LAN:
 
 ```sh
-crab server --import-all              # import everything from ~/.claude/projects/
-crab server --import-from ~/project   # import a specific project
+work server --profile server
+work auth enable
 ```
 
-The web UI gives you full-text search across all conversations with syntax-highlighted code blocks and diffs.
+Share the URL. The first person to register becomes admin. From there:
 
-### Sharing with your team
+- **Shared terminals** — watch what Claude is doing on a teammate's instance,
+  with a lock to coordinate who's typing
+- **Live presence** — see who's connected and which instance they're focused on
+- **Chat** — real-time messaging, per-instance or global
+- **Task board** — create and assign tasks tied to instances, synced to every
+  client
 
-Set a profile and enable auth:
+Your local CLI always bypasses auth, so `work attach` keeps working without
+credentials.
+
+## Search Everything
+
+Workshop automatically syncs conversation history from Claude Code into a
+local SQLite database — every session, every project, fully searchable.
 
 ```sh
-crab server --profile tunnel    # or --profile server
-crab auth enable
+work server --import-all           # sync all projects
+work server --import-from ~/myapp  # sync one project
 ```
 
-Share the URL. The first person to register becomes admin.
-
-| Profile  | Binds to    | Auth | Use case                        |
-|----------|-------------|------|---------------------------------|
-| `local`  | `127.0.0.1` | off  | Solo development (default)      |
-| `tunnel` | `127.0.0.1` | on   | Tunneling (ngrok, cloudflared)  |
-| `server` | `0.0.0.0`   | on   | LAN or public deployment        |
-
-When sharing, multiple users can:
-- **Watch the same instance** — with a lock system to coordinate typing
-- **See who's online** — live presence shows who's connected and where
-- **Chat** — real-time messaging overlaid on instances
-- **Share tasks** — a task board tied to instances, synced across clients
-
-Your local CLI (`127.0.0.1`) always bypasses auth, so `crab list` and `crab attach` keep working.
+The web UI gives you full-text search with syntax-highlighted code and diffs.
+Find that conversation from three weeks ago where Claude solved the exact
+problem you're looking at now.
 
 ## Configuration
 
-All config lives in `~/.crabcity/config.toml`:
-
-```toml
-profile = "local"
-
-[auth]
-enabled = false
-session_ttl_secs = 604800      # 7 days
-allow_registration = true
-
-[server]
-host = "127.0.0.1"
-port = 0                       # 0 = auto-select
-max_buffer_mb = 25             # output buffer per instance
-hang_timeout_secs = 300        # hang detection (0 = disabled)
-```
-
-Layering: CLI flags > env vars > config.toml > profile defaults.
-
-Environment variables use the `CRAB_` prefix with `__` as a section separator
-(e.g. `CRAB_AUTH__ENABLED=true`).
-
-Full reference: [docs/configuration.md](docs/configuration.md).
+All config lives in `~/.workshop/config.toml`. See
+[docs/configuration.md](docs/configuration.md) for the full reference —
+profiles, env vars, auth settings, server tuning.
 
 ## FAQ
 
-**What exactly runs when I type `crab`?**
-A daemon process starts in the background (if not already running) that manages
-all your Claude instances. The TUI connects to it. So does the web UI. Closing
-the TUI doesn't kill your instances — they keep running until you `crab kill` them
-or `crab kill-server`.
+<details>
+<summary><strong>What happens when I type <code>work</code>?</strong></summary>
 
-**How is this different from tmux + Claude Code?**
-Crab City gives you things tmux can't: real-time state detection (is Claude
-thinking? running a tool? idle?), a searchable conversation database, multi-user
-auth, a web dashboard, and a task board. The terminal multiplexing is aware of
-Claude's protocol, not just raw bytes.
+A daemon starts in the background (if one isn't already running) and manages
+all your Claude instances. The TUI connects to it. So does the web UI.
+Closing the TUI doesn't kill anything — instances keep running until you
+`work kill` them or `work kill-server`.
+</details>
 
-**Does my data leave my machine?**
-No. Everything is local — SQLite database, conversation logs, config. If you
-enable the `server` profile, you're explicitly choosing to bind to a network
-interface, but the data stays on that machine.
+<details>
+<summary><strong>How is this different from tmux?</strong></summary>
 
-**Can I use this with other AI coding tools?**
-Currently built for Claude Code only. The conversation importer, state detection,
-and instance management are all Claude Code-specific.
+Workshop understands Claude's protocol. It detects state (thinking, tool use,
+idle), imports conversations into a searchable database, provides multi-user
+auth with live presence, and gives you a web dashboard. tmux sees raw bytes.
+</details>
 
-**What platforms are supported?**
-Linux (x86_64, aarch64) and macOS (Apple Silicon, Intel via Rosetta 2).
+<details>
+<summary><strong>Does my data leave my machine?</strong></summary>
 
-## Architecture
+No. Everything is local: SQLite database, conversation history, config. The
+`tunnel` and `server` profiles bind to a network interface so teammates can
+connect, but the data stays on your machine.
+</details>
 
-```
-┌─────────────────────────────────────────────────┐
-│  Web UI (SvelteKit)  or  TUI (ratatui)          │
-├─────────────────────────────────────────────────┤
-│  Server (axum)                                  │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
-│  │ Instance │ │ WebSocket│ │ Conversation     │ │
-│  │ Manager  │ │ Mux      │ │ Import + Search  │ │
-│  └──────────┘ └──────────┘ └──────────────────┘ │
-├─────────────────────────────────────────────────┤
-│  PTY Layer (pty_manager + virtual_terminal)     │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
-│  │ claude   │ │ claude   │ │ claude           │ │
-│  │ instance │ │ instance │ │ instance         │ │
-│  └──────────┘ └──────────┘ └──────────────────┘ │
-└─────────────────────────────────────────────────┘
-         SQLite (conversations, tasks, auth)
-```
+<details>
+<summary><strong>What platforms are supported?</strong></summary>
 
-Each instance is an isolated Tokio task with its own PTY handle and virtual
-terminal. The server detects Claude's state from conversation logs with a
-terminal-heuristic fallback, and broadcasts changes to all connected clients
-over WebSocket.
+Linux (x86_64, aarch64) and macOS (Apple Silicon, Intel).
+</details>
 
-## Development
+## Learn More
 
-```sh
-cargo check -p crab_city          # quick compile check
-cargo test -p crab_city           # run unit tests
-bazel test //...                  # full CI build + tests
-bazel run //tools/format          # format code (never use rustfmt directly)
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
-
-## Documentation
-
-- [Configuration Reference](docs/configuration.md) — CLI options, profiles, config.toml, env vars
-- [Architecture](docs/architecture.md) — system design, WebSocket protocol, state detection
-- [Operations](docs/operations.md) — endpoints, metrics, troubleshooting, database management
-- [Contributing](CONTRIBUTING.md) — dev setup, building, testing, code style
+- [Configuration](docs/configuration.md) — profiles, env vars, CLI options
+- [Architecture](docs/architecture.md) — system design, protocols, state
+  detection
+- [Operations](docs/operations.md) — endpoints, metrics, troubleshooting
+- [Contributing](CONTRIBUTING.md) — building from source, dev setup, testing
 
 ## License
 
-Apache 2.0 — Copyright 2025 Empathic, Inc.
+Apache 2.0 — Copyright 2025-2026 Empathic, Inc.

@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CARGO_TOML="$REPO_ROOT/packages/crab_city/Cargo.toml"
+CARGO_TOML="$REPO_ROOT/packages/workshop/Cargo.toml"
 
 SUFFIX=""
 COMMIT_ARG=""

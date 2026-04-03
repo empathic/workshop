@@ -36,7 +36,7 @@ echo ""
 echo "=== Chrome accent lint (var(--accent-*) in chrome files) ==="
 # Chrome components must use --chrome-accent-*, not bare --accent-*.
 # Content files (conversations, notebooks, diffs, code views, games) are exempt.
-UI_DIR="packages/crab_city_ui/src"
+UI_DIR="packages/workshop_ui/src"
 ACCENT_HITS=$(grep -rn 'var(--accent-' "$UI_DIR/lib/components/" "$UI_DIR/routes/" \
     --include='*.svelte' \
     --exclude-dir='notebook-cell' \

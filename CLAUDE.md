@@ -2,7 +2,7 @@
 
 ## Documentation
 
-When changing code, **update the associated docs in the same change**. Key files: `docs/architecture.md` (system design), `docs/web-terminal.md` (client terminal), `docs/configuration.md` (config), `packages/crab_city_ui/CLAUDE.md` (frontend conventions), this file (build/architecture notes). Stale docs are worse than no docs.
+When changing code, **update the associated docs in the same change**. Key files: `docs/architecture.md` (system design), `docs/web-terminal.md` (client terminal), `docs/configuration.md` (config), `packages/workshop_ui/CLAUDE.md` (frontend conventions), this file (build/architecture notes). Stale docs are worse than no docs.
 
 ## Build System
 
@@ -30,32 +30,32 @@ All Rust code uses edition 2024. Cargo defaults to edition 2021 for `cargo check
 
 ### Build Commands
 
-- `cargo check -p crab_city` — quick compile check
-- `cargo test -p crab_city` — run unit tests for the server
+- `cargo check -p workshop` — quick compile check
+- `cargo test -p workshop` — run unit tests for the server
 - `cargo test -p <package>` — run unit tests for any workspace crate
 - `bazel test //...` — full CI-equivalent (includes format check, edition 2024)
-- `CRAB_CITY_UI_PATH=packages/crab_city_ui/build cargo build -p crab_city_ui` — build embedded UI crate
+- `WORKSHOP_UI_PATH=packages/workshop_ui/build cargo build -p workshop_ui` — build embedded UI crate
 
 ### Desktop App (Tauri)
 
-- `cargo check -p crab_city_desktop` — quick compile check
-- `cargo test -p crab_city_desktop` — run unit tests
-- `cd packages/crab_city_desktop && cargo tauri dev --config tauri.dev.conf.json` — launch desktop app with embedded server (auto-starts Vite dev server)
-- `bazel build //packages/crab_city_desktop:macos_app` — build macOS `.app` bundle (debug)
-- `bazel build --config=opt //packages/crab_city_desktop:macos_app` — build optimized `.app` bundle
+- `cargo check -p workshop_desktop` — quick compile check
+- `cargo test -p workshop_desktop` — run unit tests
+- `cd packages/workshop_desktop && cargo tauri dev --config tauri.dev.conf.json` — launch desktop app with embedded server (auto-starts Vite dev server)
+- `bazel build //packages/workshop_desktop:macos_app` — build macOS `.app` bundle (debug)
+- `bazel build --config=opt //packages/workshop_desktop:macos_app` — build optimized `.app` bundle
 
-**Dev workflow** (single terminal): `cd packages/crab_city_desktop && cargo tauri dev --config tauri.dev.conf.json` — the Tauri app starts an embedded server in-process, and Vite's dev proxy discovers it automatically via the `daemon.port` file. The `--config` flag merges `tauri.dev.conf.json` (devUrl + beforeDevCommand) into the base config. The base `tauri.conf.json` has no dev URL — production builds never reference external dev servers.
+**Dev workflow** (single terminal): `cd packages/workshop_desktop && cargo tauri dev --config tauri.dev.conf.json` — the Tauri app starts an embedded server in-process, and Vite's dev proxy discovers it automatically via the `daemon.port` file. The `--config` flag merges `tauri.dev.conf.json` (devUrl + beforeDevCommand) into the base config. The base `tauri.conf.json` has no dev URL — production builds never reference external dev servers.
 
-**Custom data directory**: `crab_city_desktop --data-dir /path/to/data` (defaults to `~/.crabcity`).
+**Custom data directory**: `workshop_desktop --data-dir /path/to/data` (defaults to `~/.workshop`).
 
-Note: `crab_city_desktop` is in workspace `members` but NOT in `default-members` (requires Tauri system deps). The desktop app depends on the `crab_city` library crate (with `embedded-ui` feature) — no separate daemon process.
+Note: `workshop_desktop` is in workspace `members` but NOT in `default-members` (requires Tauri system deps). The desktop app depends on the `workshop` library crate (with `embedded-ui` feature) — no separate daemon process.
 
 ### Frontend (SvelteKit)
 
-- `cd packages/crab_city_ui && pnpm install && pnpm build` — build the web UI
-- `cd packages/crab_city_ui && pnpm dev` — dev server with hot reload
-- `cd packages/crab_city_ui && pnpm test` — run Jest tests
-- `cd packages/crab_city_ui && pnpm format` — format TS/Svelte with Prettier (also runs via `bazel run //tools/format`)
+- `cd packages/workshop_ui && pnpm install && pnpm build` — build the web UI
+- `cd packages/workshop_ui && pnpm dev` — dev server with hot reload
+- `cd packages/workshop_ui && pnpm test` — run Jest tests
+- `cd packages/workshop_ui && pnpm format` — format TS/Svelte with Prettier (also runs via `bazel run //tools/format`)
 
 ## TUI Styling
 
@@ -69,15 +69,15 @@ The terminal theme is solarized. Hardcoded ANSI colors are invisible or clash:
 ### Package Dependency Graph
 
 ```
-crab_city (lib: server core, config, handlers, WS | bin: CLI + TUI)
+workshop (lib: server core, config, handlers, WS | bin "work": CLI + TUI)
 ├── claude_convo      (conversation log reader)
 ├── pty_manager        (PTY lifecycle)
 └── virtual_terminal   (screen buffer + viewport negotiation)
 
-tty_wrapper            (standalone HTTP-controlled PTY — not depended on by crab_city)
-crab_city_ui           (SvelteKit frontend — embedded via rust-embed feature flag)
-crab_city_desktop      (Tauri native desktop app — embeds crab_city server in-process)
-  └── crab_city (lib, with embedded-ui feature)
+tty_wrapper            (standalone HTTP-controlled PTY — not depended on by workshop)
+workshop_ui           (SvelteKit frontend — embedded via rust-embed feature flag)
+workshop_desktop      (Tauri native desktop app — embeds workshop server in-process)
+  └── workshop (lib, with embedded-ui feature)
 ```
 
 ### Daemon Lifecycle
@@ -88,7 +88,7 @@ One server per data directory, enforced by advisory file lock (`daemon.lock`). T
 - **`check_existing_server()`** — reads `daemon.pid`/`daemon.port`, verifies process alive via `kill(pid, 0)`, then health-checks `GET /health`
 - **`release_daemon_files()`** — PID-aware cleanup: only deletes state files if `daemon.pid` matches current process
 - **`DaemonLock`** — RAII guard; `Drop` calls `release_daemon_files()`, then releases the flock
-- Both `crab server` and `EmbeddedServer::start()` acquire the lock before initializing
+- Both `work server` and `EmbeddedServer::start()` acquire the lock before initializing
 - Desktop app calls `check_existing_server()` first — connects to existing daemon if healthy, otherwise starts embedded
 
 ### Server Internals

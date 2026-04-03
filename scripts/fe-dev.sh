@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "${1:-}" ]; then
-  export CRAB_CITY_DATA_DIR="$1"
+  export WORKSHOP_DATA_DIR="$1"
 fi
 
-exec ibazel run //packages/crab_city_ui:dev
+exec ibazel run //packages/workshop_ui:dev

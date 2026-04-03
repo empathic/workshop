@@ -809,93 +809,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crab_city"
-version = "0.45.1"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "chrono",
- "clap",
- "crab_city_ui",
- "dirs 5.0.1",
- "figment",
- "futures",
- "hotln",
- "ignore",
- "mime_guess",
- "nix 0.29.0",
- "password-hash",
- "pty_manager",
- "rand 0.8.5",
- "ratatui",
- "reqwest 0.12.28",
- "rpassword",
- "rust-embed",
- "serde",
- "serde_json",
- "similar",
- "sqlx",
- "syndiff",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite 0.24.0",
- "tokio-util",
- "toml 0.8.2",
- "toolpath-claude",
- "toolpath-convo",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-css",
- "tree-sitter-go",
- "tree-sitter-html",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-language",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-toml-ng",
- "tree-sitter-typescript",
- "uuid",
- "virtual_terminal",
- "vt100",
-]
-
-[[package]]
-name = "crab_city_desktop"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blake3",
- "brotli",
- "clap",
- "crab_city",
- "plist",
- "png",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-shell",
- "tauri-plugin-window-state",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "crab_city_ui"
-version = "0.2.0"
-dependencies = [
- "rust-embed",
-]
-
-[[package]]
 name = "crc"
 version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8105,6 +8018,93 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "workshop"
+version = "0.45.1"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "chrono",
+ "clap",
+ "dirs 5.0.1",
+ "figment",
+ "futures",
+ "hotln",
+ "ignore",
+ "mime_guess",
+ "nix 0.29.0",
+ "password-hash",
+ "pty_manager",
+ "rand 0.8.5",
+ "ratatui",
+ "reqwest 0.12.28",
+ "rpassword",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "similar",
+ "sqlx",
+ "syndiff",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tokio-util",
+ "toml 0.8.2",
+ "toolpath-claude",
+ "toolpath-convo",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-css",
+ "tree-sitter-go",
+ "tree-sitter-html",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-language",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+ "tree-sitter-typescript",
+ "uuid",
+ "virtual_terminal",
+ "vt100",
+ "workshop_ui",
+]
+
+[[package]]
+name = "workshop_desktop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "brotli",
+ "clap",
+ "plist",
+ "png",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-shell",
+ "tauri-plugin-window-state",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "workshop",
+]
+
+[[package]]
+name = "workshop_ui"
+version = "0.2.0"
+dependencies = [
+ "rust-embed",
 ]
 
 [[package]]
