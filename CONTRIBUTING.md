@@ -10,7 +10,7 @@
 ## Clone and Build
 
 ```sh
-git clone https://github.com/anthropics/workshop && cd workshop
+git clone https://github.com/empathic/workshop && cd workshop
 
 # Cargo for development (fast iteration)
 cargo build -p workshop

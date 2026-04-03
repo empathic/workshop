@@ -11,7 +11,7 @@ browser.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/empathic-ai/workshop/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/empathic/workshop/main/scripts/install.sh | bash
 ```
 
 Installs the `work` binary to `~/.local/bin`. Requires
