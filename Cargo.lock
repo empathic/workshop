@@ -3748,12 +3748,13 @@ dependencies = [
  "clap",
  "iroh",
  "iroh-tickets",
+ "pty_manager",
  "ratatui",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "virtual_terminal",
  "vt100",
- "workshop",
 ]
 
 [[package]]

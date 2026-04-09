@@ -8,7 +8,8 @@ name = "meld"
 path = "src/main.rs"
 
 [dependencies]
-workshop = { path = "../workshop" }
+pty_manager = { workspace = true }
+virtual_terminal = { workspace = true }
 iroh = "0.97"
 iroh-tickets = "0.4"
 ratatui = "0.30"

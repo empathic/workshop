@@ -1,4 +1,5 @@
 pub mod host;
+pub mod session;
 mod viewer;
 
 use anyhow::Result;
@@ -6,7 +7,7 @@ use clap::{Parser, Subcommand};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::prelude::*;
 use ratatui::widgets::Widget;
-use workshop::virtual_terminal::walk_row;
+use virtual_terminal::walk_row;
 
 #[derive(Parser)]
 #[command(name = "meld", about = "P2P terminal sharing over iroh")]

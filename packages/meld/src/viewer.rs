@@ -50,14 +50,9 @@ pub async fn run(ticket_str: &str) -> Result<()> {
     // Crossterm event reader thread
     let (event_tx, mut event_rx) = mpsc::channel::<Event>(64);
     std::thread::spawn(move || {
-        loop {
-            match event::read() {
-                Ok(ev) => {
-                    if event_tx.blocking_send(ev).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(ev) = event::read() {
+            if event_tx.blocking_send(ev).is_err() {
+                break;
             }
         }
     });
@@ -81,8 +76,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
 
         terminal.draw(|frame| {
             let [content, status_area] =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(1)])
-                    .areas(frame.area());
+                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
 
             frame.render_widget(crate::PtyWidget { screen }, content);
             frame.render_widget(
@@ -154,12 +148,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
 }
 
 async fn send_viewport(send: &mut iroh::endpoint::SendStream, rows: u16, cols: u16) -> Result<()> {
-    let buf = [
-        (rows >> 8) as u8,
-        rows as u8,
-        (cols >> 8) as u8,
-        cols as u8,
-    ];
+    let buf = [(rows >> 8) as u8, rows as u8, (cols >> 8) as u8, cols as u8];
     send.write_all(&buf).await?;
     Ok(())
 }
