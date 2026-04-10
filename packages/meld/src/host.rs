@@ -8,19 +8,34 @@ use iroh_tickets::endpoint::EndpointTicket;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::{info, warn};
 
+use crate::protocol::{self, host as htag, viewer as vtag};
 use crate::session::{Output, Session};
 
 pub const ALPN: &[u8] = b"meld/term/0";
 const SCROLLBACK: usize = 10_000;
 
+/// Turn state broadcast from host main loop to viewer tasks.
+#[derive(Clone, Default)]
+struct TurnState {
+    holder: Option<String>,
+    requester: Option<String>,
+}
+
+/// Events from viewer tasks to host main loop.
+enum TurnEvent {
+    ViewerConnected,
+    ViewerDisconnected,
+    TurnRequested { conn_id: String },
+    TurnReleased { conn_id: String },
+}
+
 pub async fn run(command: Vec<String>) -> Result<()> {
     let (cmd, args) = resolve_command(command);
     let cwd = std::env::current_dir()?.to_string_lossy().to_string();
 
-    // Set up iroh endpoint before spawning PTY (so we can show ticket first)
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .bind()
@@ -40,13 +55,10 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     let (mut cols, mut rows) = ratatui::crossterm::terminal::size()?;
     let mut pty_rows = rows.saturating_sub(1).max(1);
 
-    // Spawn PTY session
     let session = Session::spawn(&cmd, &args, &cwd, pty_rows, cols, SCROLLBACK)
         .context("failed to spawn session")?;
 
     let mut output_rx = session.subscribe_output().await?;
-
-    // Register host's terminal as a viewport
     session
         .update_viewport_and_resize("host", pty_rows, cols)
         .await?;
@@ -70,17 +82,19 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         }
     });
 
-    // Viewer accept loop
+    // Viewer management
     let viewer_count = Arc::new(AtomicUsize::new(0));
-    let (viewer_changed_tx, mut viewer_changed_rx) = mpsc::channel::<()>(4);
+    let (turn_tx, turn_rx) = watch::channel(TurnState::default());
+    let (event_notify_tx, mut event_notify_rx) = mpsc::channel::<TurnEvent>(16);
     let vc = viewer_count.clone();
-    let vtx = viewer_changed_tx.clone();
+    let etx = event_notify_tx.clone();
     let viewer_session = session.clone();
     let viewer_endpoint = endpoint.clone();
+    let viewer_turn_rx = turn_rx.clone();
     tokio::spawn(async move {
-        accept_viewers(viewer_endpoint, viewer_session, vc, vtx).await;
+        accept_viewers(viewer_endpoint, viewer_session, vc, etx, viewer_turn_rx).await;
     });
-    drop(viewer_changed_tx);
+    drop(event_notify_tx);
 
     // PTY exit detection
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
@@ -95,6 +109,8 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         }
     });
 
+    let mut turn_state = TurnState::default();
+
     loop {
         if scroll_offset > 0 {
             vt_parser.screen_mut().set_scrollback(scroll_offset);
@@ -102,11 +118,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         }
 
         let n = viewer_count.load(Ordering::Relaxed);
-        let status = if scroll_offset > 0 {
-            format!("(meld) ↑ {} lines — type to return", scroll_offset)
-        } else {
-            host_status(n)
-        };
+        let status = build_status(n, &turn_state, scroll_offset);
         let screen = vt_parser.screen();
         let cursor_pos = screen.cursor_position();
         let hide_cursor = screen.hide_cursor();
@@ -151,6 +163,23 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                             scroll_offset += pty_rows as usize / 2;
                         } else if shift && key.code == KeyCode::PageDown {
                             scroll_offset = scroll_offset.saturating_sub(pty_rows as usize / 2);
+                        } else if key.code == KeyCode::F(9) {
+                            // F9: accept request or revoke turn
+                            if turn_state.requester.is_some() {
+                                // Grant: move requester → holder
+                                turn_state.holder = turn_state.requester.take();
+                                let _ = turn_tx.send(turn_state.clone());
+                            } else if turn_state.holder.is_some() {
+                                // Revoke
+                                turn_state.holder = None;
+                                let _ = turn_tx.send(turn_state.clone());
+                            }
+                        } else if key.code == KeyCode::F(10) {
+                            // F10: deny request
+                            if turn_state.requester.is_some() {
+                                turn_state.requester = None;
+                                let _ = turn_tx.send(turn_state.clone());
+                            }
                         } else if let Some(bytes) = crate::key_to_bytes(&key) {
                             let text = String::from_utf8_lossy(&bytes);
                             let _ = session.write_input(&text).await;
@@ -175,7 +204,27 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                     _ => {}
                 }
             }
-            _ = viewer_changed_rx.recv() => {}
+            Some(event) = event_notify_rx.recv() => {
+                match event {
+                    TurnEvent::ViewerConnected | TurnEvent::ViewerDisconnected => {}
+                    TurnEvent::TurnRequested { conn_id } => {
+                        // Only allow one requester at a time
+                        if turn_state.holder.is_none() && turn_state.requester.is_none() {
+                            turn_state.requester = Some(conn_id);
+                        }
+                        // If someone else already has the turn or is requesting, ignore
+                    }
+                    TurnEvent::TurnReleased { conn_id } => {
+                        if turn_state.holder.as_deref() == Some(&conn_id) {
+                            turn_state.holder = None;
+                            let _ = turn_tx.send(turn_state.clone());
+                        }
+                        if turn_state.requester.as_deref() == Some(&conn_id) {
+                            turn_state.requester = None;
+                        }
+                    }
+                }
+            }
             _ = &mut shutdown_rx => break,
         }
     }
@@ -190,6 +239,25 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+fn build_status(viewers: usize, turn: &TurnState, scroll_offset: usize) -> String {
+    if scroll_offset > 0 {
+        return format!("(meld) ↑ {} lines — type to return", scroll_offset);
+    }
+    if let Some(ref id) = turn.requester {
+        let short = &id[..8.min(id.len())];
+        return format!("(meld) {short} requesting edit · F9 accept · F10 deny");
+    }
+    if let Some(ref id) = turn.holder {
+        let short = &id[..8.min(id.len())];
+        return format!("(meld) {short} editing · F9 revoke");
+    }
+    format!(
+        "(meld) hosting [{} viewer{}]",
+        viewers,
+        if viewers == 1 { "" } else { "s" }
+    )
+}
+
 fn drain_output(rx: &mut broadcast::Receiver<Output>, parser: &mut vt100::Parser) {
     loop {
         match rx.try_recv() {
@@ -200,19 +268,12 @@ fn drain_output(rx: &mut broadcast::Receiver<Output>, parser: &mut vt100::Parser
     }
 }
 
-fn host_status(viewers: usize) -> String {
-    format!(
-        "(meld) hosting [{} viewer{}]",
-        viewers,
-        if viewers == 1 { "" } else { "s" }
-    )
-}
-
 async fn accept_viewers(
     endpoint: Endpoint,
     session: Session,
     viewer_count: Arc<AtomicUsize>,
-    viewer_changed_tx: mpsc::Sender<()>,
+    event_tx: mpsc::Sender<TurnEvent>,
+    turn_rx: watch::Receiver<TurnState>,
 ) {
     while let Some(incoming) = endpoint.accept().await {
         let conn = match incoming.await {
@@ -224,9 +285,10 @@ async fn accept_viewers(
         };
         let s = session.clone();
         let vc = viewer_count.clone();
-        let vtx = viewer_changed_tx.clone();
+        let etx = event_tx.clone();
+        let trx = turn_rx.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_viewer(conn, s, vc, vtx).await {
+            if let Err(e) = handle_viewer(conn, s, vc, etx, trx).await {
                 info!("viewer disconnected: {e}");
             }
         });
@@ -237,17 +299,24 @@ async fn handle_viewer(
     conn: iroh::endpoint::Connection,
     session: Session,
     viewer_count: Arc<AtomicUsize>,
-    viewer_changed_tx: mpsc::Sender<()>,
+    event_tx: mpsc::Sender<TurnEvent>,
+    turn_rx: watch::Receiver<TurnState>,
 ) -> Result<()> {
     let conn_id = conn.remote_id().to_string();
     info!("viewer connected: {}", &conn_id[..8]);
     viewer_count.fetch_add(1, Ordering::Relaxed);
-    let _ = viewer_changed_tx.send(()).await;
+    let _ = event_tx.send(TurnEvent::ViewerConnected).await;
 
-    let result = serve_viewer(&conn, &session, &conn_id).await;
+    let result = serve_viewer(&conn, &session, &conn_id, &event_tx, turn_rx).await;
 
+    // Clean up turn state if this viewer held or requested the turn
+    let _ = event_tx
+        .send(TurnEvent::TurnReleased {
+            conn_id: conn_id.clone(),
+        })
+        .await;
     viewer_count.fetch_sub(1, Ordering::Relaxed);
-    let _ = viewer_changed_tx.send(()).await;
+    let _ = event_tx.send(TurnEvent::ViewerDisconnected).await;
     let _ = session.remove_client_and_resize(&conn_id).await;
     info!("viewer disconnected: {}", &conn_id[..8]);
     result
@@ -257,44 +326,96 @@ async fn serve_viewer(
     conn: &iroh::endpoint::Connection,
     session: &Session,
     conn_id: &str,
+    event_tx: &mpsc::Sender<TurnEvent>,
+    mut turn_rx: watch::Receiver<TurnState>,
 ) -> Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
 
-    let mut buf = [0u8; 4];
-    recv.read_exact(&mut buf).await?;
-    let rows = u16::from_be_bytes([buf[0], buf[1]]).max(1);
-    let cols = u16::from_be_bytes([buf[2], buf[3]]).max(1);
+    // Read initial viewport (framed)
+    let (tag, payload) = protocol::read_msg(&mut recv).await?;
+    anyhow::ensure!(
+        tag == vtag::VIEWPORT && payload.len() == 4,
+        "expected viewport"
+    );
+    let rows = u16::from_be_bytes([payload[0], payload[1]]).max(1);
+    let cols = u16::from_be_bytes([payload[2], payload[3]]).max(1);
 
     session
         .update_viewport_and_resize(conn_id, rows, cols)
         .await?;
 
+    // Send replay
     let replay = session.get_recent_output(64 * 1024, rows).await;
     for chunk in &replay {
-        send.write_all(chunk.as_bytes()).await?;
+        protocol::write_msg(&mut send, htag::OUTPUT, chunk.as_bytes()).await?;
     }
 
     let mut output_rx = session.subscribe_output().await?;
+
+    // Track what this viewer's last-known turn state was, to send grant/revoke only on transitions
+    let mut was_holder = false;
+    let mut was_denied = false;
 
     loop {
         tokio::select! {
             result = output_rx.recv() => {
                 match result {
-                    Ok(output) => send.write_all(&output.data).await?,
+                    Ok(output) => {
+                        protocol::write_msg(&mut send, htag::OUTPUT, &output.data).await?;
+                    }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!("viewer {} lagged by {n}", &conn_id[..8]);
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
-            result = recv.read_exact(&mut buf) => {
-                match result {
-                    Ok(()) => {
-                        let rows = u16::from_be_bytes([buf[0], buf[1]]).max(1);
-                        let cols = u16::from_be_bytes([buf[2], buf[3]]).max(1);
-                        let _ = session.update_viewport_and_resize(conn_id, rows, cols).await;
+            result = protocol::read_msg(&mut recv) => {
+                let (tag, payload) = result?;
+                match tag {
+                    vtag::VIEWPORT => {
+                        if payload.len() == 4 {
+                            let rows = u16::from_be_bytes([payload[0], payload[1]]).max(1);
+                            let cols = u16::from_be_bytes([payload[2], payload[3]]).max(1);
+                            let _ = session.update_viewport_and_resize(conn_id, rows, cols).await;
+                        }
                     }
-                    Err(_) => break,
+                    vtag::REQUEST_TURN => {
+                        let _ = event_tx.send(TurnEvent::TurnRequested {
+                            conn_id: conn_id.to_string(),
+                        }).await;
+                    }
+                    vtag::INPUT => {
+                        // Only forward if this viewer holds the turn
+                        let state = turn_rx.borrow().clone();
+                        if state.holder.as_deref() == Some(conn_id) {
+                            let text = String::from_utf8_lossy(&payload);
+                            let _ = session.write_input(&text).await;
+                        }
+                    }
+                    vtag::RELEASE_TURN => {
+                        let _ = event_tx.send(TurnEvent::TurnReleased {
+                            conn_id: conn_id.to_string(),
+                        }).await;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(()) = turn_rx.changed() => {
+                let state = turn_rx.borrow().clone();
+                let is_holder = state.holder.as_deref() == Some(conn_id);
+                let is_requester = state.requester.as_deref() == Some(conn_id);
+
+                if is_holder && !was_holder {
+                    protocol::write_msg(&mut send, htag::TURN_GRANTED, &[]).await?;
+                    was_holder = true;
+                    was_denied = false;
+                } else if !is_holder && was_holder {
+                    protocol::write_msg(&mut send, htag::TURN_REVOKED, &[]).await?;
+                    was_holder = false;
+                } else if !is_requester && !is_holder && !was_denied && !was_holder {
+                    // Was requesting but now cleared (denied)
+                    protocol::write_msg(&mut send, htag::TURN_DENIED, &[]).await?;
+                    was_denied = true;
                 }
             }
         }

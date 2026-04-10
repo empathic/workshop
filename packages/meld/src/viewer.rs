@@ -9,9 +9,16 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::host::ALPN;
+use crate::protocol::{self, host as htag, viewer as vtag};
 
-const STATUS: &str = "(meld) viewing [readonly] press q to exit";
 const SCROLLBACK: usize = 10_000;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    ReadOnly,
+    Requesting,
+    Editing,
+}
 
 pub async fn run(ticket_str: &str) -> Result<()> {
     let ticket: EndpointTicket = ticket_str
@@ -36,10 +43,13 @@ pub async fn run(ticket_str: &str) -> Result<()> {
     let (mut cols, mut rows) = ratatui::crossterm::terminal::size()?;
     let mut pty_rows = rows.saturating_sub(1).max(1);
 
-    send_viewport(&mut send, pty_rows, cols).await?;
+    // Send initial viewport (framed)
+    let vp = viewport_bytes(pty_rows, cols);
+    protocol::write_msg(&mut send, vtag::VIEWPORT, &vp).await?;
 
     let mut vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
     let mut scroll_offset: usize = 0;
+    let mut mode = Mode::ReadOnly;
 
     let mut terminal = ratatui::init();
     ratatui::crossterm::execute!(
@@ -57,19 +67,13 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         }
     });
 
-    let mut buf = vec![0u8; 4096];
-
     loop {
         if scroll_offset > 0 {
             vt_parser.screen_mut().set_scrollback(scroll_offset);
             scroll_offset = vt_parser.screen().scrollback();
         }
 
-        let status = if scroll_offset > 0 {
-            format!("(meld) ↑ {} lines — scroll down to return", scroll_offset)
-        } else {
-            STATUS.to_string()
-        };
+        let status = build_status(mode, scroll_offset);
         let screen = vt_parser.screen();
         let cursor_pos = screen.cursor_position();
         let hide_cursor = screen.hide_cursor();
@@ -95,28 +99,80 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         }
 
         tokio::select! {
-            result = recv.read(&mut buf) => {
-                match result {
-                    Ok(Some(n)) => {
-                        vt_parser.process(&buf[..n]);
+            result = protocol::read_msg(&mut recv) => {
+                let (tag, payload) = match result {
+                    Ok(msg) => msg,
+                    Err(_) => break, // host closed connection
+                };
+                match tag {
+                    htag::OUTPUT => {
+                        vt_parser.process(&payload);
                         scroll_offset = 0;
                     }
-                    Ok(None) => break,
-                    Err(_) => break,
+                    htag::TURN_GRANTED => {
+                        mode = Mode::Editing;
+                    }
+                    htag::TURN_REVOKED | htag::TURN_DENIED => {
+                        mode = Mode::ReadOnly;
+                    }
+                    _ => {}
                 }
             }
             Some(ev) = event_rx.recv() => {
                 match ev {
-                    Event::Key(key) => match key.code {
-                        KeyCode::Char('q') | KeyCode::Char('Q') => break,
-                        KeyCode::PageUp => {
-                            scroll_offset += pty_rows as usize / 2;
+                    Event::Key(key) => {
+                        match mode {
+                            Mode::ReadOnly => match key.code {
+                                KeyCode::Char('q') | KeyCode::Char('Q') => break,
+                                KeyCode::Char('e') | KeyCode::Char('E') => {
+                                    protocol::write_msg(&mut send, vtag::REQUEST_TURN, &[]).await?;
+                                    mode = Mode::Requesting;
+                                }
+                                KeyCode::PageUp => {
+                                    scroll_offset += pty_rows as usize / 2;
+                                }
+                                KeyCode::PageDown => {
+                                    scroll_offset = scroll_offset.saturating_sub(pty_rows as usize / 2);
+                                }
+                                _ => {}
+                            },
+                            Mode::Requesting => match key.code {
+                                KeyCode::Char('q') | KeyCode::Char('Q') => {
+                                    protocol::write_msg(&mut send, vtag::RELEASE_TURN, &[]).await?;
+                                    break;
+                                }
+                                KeyCode::Esc => {
+                                    protocol::write_msg(&mut send, vtag::RELEASE_TURN, &[]).await?;
+                                    mode = Mode::ReadOnly;
+                                }
+                                KeyCode::PageUp => {
+                                    scroll_offset += pty_rows as usize / 2;
+                                }
+                                KeyCode::PageDown => {
+                                    scroll_offset = scroll_offset.saturating_sub(pty_rows as usize / 2);
+                                }
+                                _ => {}
+                            },
+                            Mode::Editing => match key.code {
+                                KeyCode::Esc => {
+                                    protocol::write_msg(&mut send, vtag::RELEASE_TURN, &[]).await?;
+                                    mode = Mode::ReadOnly;
+                                }
+                                KeyCode::PageUp => {
+                                    scroll_offset += pty_rows as usize / 2;
+                                }
+                                KeyCode::PageDown => {
+                                    scroll_offset = scroll_offset.saturating_sub(pty_rows as usize / 2);
+                                }
+                                _ => {
+                                    if let Some(bytes) = crate::key_to_bytes(&key) {
+                                        protocol::write_msg(&mut send, vtag::INPUT, &bytes).await?;
+                                        scroll_offset = 0;
+                                    }
+                                }
+                            },
                         }
-                        KeyCode::PageDown => {
-                            scroll_offset = scroll_offset.saturating_sub(pty_rows as usize / 2);
-                        }
-                        _ => {}
-                    },
+                    }
                     Event::Mouse(mouse) => match mouse.kind {
                         MouseEventKind::ScrollUp => scroll_offset += 3,
                         MouseEventKind::ScrollDown => {
@@ -129,7 +185,8 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                         rows = new_rows;
                         pty_rows = rows.saturating_sub(1).max(1);
                         vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
-                        let _ = send_viewport(&mut send, pty_rows, cols).await;
+                        let vp = viewport_bytes(pty_rows, cols);
+                        protocol::write_msg(&mut send, vtag::VIEWPORT, &vp).await?;
                         scroll_offset = 0;
                     }
                     _ => {}
@@ -147,8 +204,17 @@ pub async fn run(ticket_str: &str) -> Result<()> {
     Ok(())
 }
 
-async fn send_viewport(send: &mut iroh::endpoint::SendStream, rows: u16, cols: u16) -> Result<()> {
-    let buf = [(rows >> 8) as u8, rows as u8, (cols >> 8) as u8, cols as u8];
-    send.write_all(&buf).await?;
-    Ok(())
+fn build_status(mode: Mode, scroll_offset: usize) -> String {
+    if scroll_offset > 0 {
+        return format!("(meld) ↑ {} lines — scroll down to return", scroll_offset);
+    }
+    match mode {
+        Mode::ReadOnly => "(meld) viewing [readonly] e to request edit · q to exit".into(),
+        Mode::Requesting => "(meld) requesting edit access...".into(),
+        Mode::Editing => "(meld) editing · Esc to release".into(),
+    }
+}
+
+fn viewport_bytes(rows: u16, cols: u16) -> [u8; 4] {
+    [(rows >> 8) as u8, rows as u8, (cols >> 8) as u8, cols as u8]
 }

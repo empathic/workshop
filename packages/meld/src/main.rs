@@ -1,4 +1,5 @@
 pub mod host;
+pub mod protocol;
 pub mod session;
 mod viewer;
 
