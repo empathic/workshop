@@ -1,6 +1,14 @@
-load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("@workshop_version//:defs.bzl", "VERSION")
+
+exports_files([
+    "apt_packages.yaml",
+    "apt_packages.lock.json",
+])
 
 package(default_visibility = ["//visibility:public"])
 
@@ -175,6 +183,53 @@ rust_test(
     ]],
     crate = ":work",
     deps = _TEST_DEPS,
+)
+
+# OCI container image
+
+pkg_files(
+    name = "work_bin_files",
+    srcs = [":work_embedded"],
+    attributes = pkg_attributes(mode = "0755"),
+    prefix = "/usr/local/bin",
+    renames = {":work_embedded": "work"},
+)
+
+pkg_tar(
+    name = "work_layer",
+    srcs = [":work_bin_files"],
+)
+
+# /usr/local/bin/claude — the downloaded file lands as `claude` (per its
+# `downloaded_file_path` in MODULE.bazel); pkg_files re-prefixes it.
+pkg_files(
+    name = "claude_bin_files",
+    srcs = ["@claude_cli_linux_amd64//file"],
+    attributes = pkg_attributes(mode = "0755"),
+    prefix = "/usr/local/bin",
+)
+
+pkg_tar(
+    name = "claude_layer",
+    srcs = [":claude_bin_files"],
+)
+
+oci_image(
+    name = "image",
+    base = "@debian_trixie_slim",
+    entrypoint = ["/usr/local/bin/work"],
+    exposed_ports = ["8080/tcp"],
+    tars = [
+        "@workshop_apt//:workshop_apt",
+        ":claude_layer",
+        ":work_layer",
+    ],
+)
+
+oci_load(
+    name = "image_load",
+    image = ":image",
+    repo_tags = ["workshop:latest"],
 )
 
 test_suite(

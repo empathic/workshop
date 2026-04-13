@@ -10,7 +10,7 @@ bazel_dep(name = "platforms", version = "1.0.0")
 ################################################################################
 
 # Helpers
-bazel_dep(name = "aspect_bazel_lib", version = "2.19.3")
+bazel_dep(name = "bazel_lib", version = "3.2.2")
 bazel_dep(name = "aspect_rules_lint", version = "1.10.2")
 bazel_dep(name = "buildifier_prebuilt", version = "8.2.1.1")
 
@@ -19,8 +19,44 @@ bazel_dep(name = "rules_pkg", version = "1.0.1", dev_dependency = True)
 
 # OCI Container Images
 bazel_dep(name = "rules_oci", version = "2.2.6")
+bazel_dep(name = "rules_distroless", version = "0.6.2")
 
-use_extension("@rules_oci//oci:extensions.bzl", "oci")
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+
+# Refresh digest with: crane digest docker.io/library/debian:trixie-slim
+oci.pull(
+    name = "debian_trixie_slim",
+    digest = "sha256:4ffb3a1511099754cddc70eb1b12e50ffdb67619aa0ab6c13fcd800a78ef7c7a",
+    image = "docker.io/library/debian",
+    platforms = ["linux/amd64"],
+    tag = "trixie-slim",
+)
+use_repo(oci, "debian_trixie_slim", "debian_trixie_slim_linux_amd64")
+
+# Regenerate lockfile: bazel run @workshop_apt//:lock
+apt = use_extension("@rules_distroless//apt:extensions.bzl", "apt")
+apt.install(
+    name = "workshop_apt",
+    lock = "//packages/workshop:apt_packages.lock.json",
+    manifest = "//packages/workshop:apt_packages.yaml",
+)
+use_repo(apt, "workshop_apt")
+
+# To upgrade:
+#   1. Read the latest version:
+#        curl -sL https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest
+#   2. Update the URL version segment below.
+#   3. Update `sha256` with:
+#        sha256sum <(curl -sL <new-url>)
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_file(
+    name = "claude_cli_linux_amd64",
+    downloaded_file_path = "claude",
+    executable = True,
+    sha256 = "f5fe84d4b8a5a322b83a8ae63ac117adb143d2a9a0bfd73a201a5201d6423869",
+    url = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.104/linux-x64/claude",
+)
 
 ################################################################################
 # JavaScript / TypeScript ######################################################

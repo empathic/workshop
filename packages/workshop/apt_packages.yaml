@@ -1,0 +1,16 @@
+version: 1
+
+sources:
+  - channel: trixie main
+    url: https://snapshot.debian.org/archive/debian/20260410T000000Z
+  - channel: trixie-security main
+    url: https://snapshot.debian.org/archive/debian-security/20260410T000000Z
+  - channel: trixie-updates main
+    url: https://snapshot.debian.org/archive/debian/20260410T000000Z
+
+archs:
+  - amd64
+
+packages:
+  - ca-certificates
+  - git
