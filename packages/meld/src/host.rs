@@ -36,6 +36,23 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     let (cmd, args) = resolve_command(command);
     let cwd = std::env::current_dir()?.to_string_lossy().to_string();
 
+    let mut terminal = ratatui::init();
+    ratatui::crossterm::execute!(
+        std::io::stdout(),
+        ratatui::crossterm::event::EnableMouseCapture
+    )?;
+
+    let cleanup = || {
+        ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::event::DisableMouseCapture
+        )
+        .ok();
+        ratatui::restore();
+    };
+
+    crate::draw_message(&mut terminal, "(meld) starting...")?;
+
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .bind()
@@ -44,13 +61,10 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     endpoint.online().await;
 
     let ticket = EndpointTicket::new(endpoint.addr());
-    eprintln!();
-    eprintln!("  viewers can connect with:");
-    eprintln!();
-    eprintln!("  meld view {ticket}");
-    eprintln!();
-    eprint!("  press enter to start session...");
-    let _ = std::io::stdin().read_line(&mut String::new());
+    let view_cmd = format!("meld view {ticket}");
+    let copied = arboard::Clipboard::new()
+        .and_then(|mut cb| cb.set_text(&view_cmd))
+        .is_ok();
 
     let (mut cols, mut rows) = ratatui::crossterm::terminal::size()?;
     let mut pty_rows = rows.saturating_sub(1).max(1);
@@ -66,12 +80,6 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     let mut vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
     let mut scroll_offset: usize = 0;
 
-    let mut terminal = ratatui::init();
-    ratatui::crossterm::execute!(
-        std::io::stdout(),
-        ratatui::crossterm::event::EnableMouseCapture
-    )?;
-
     // Crossterm event reader thread
     let (event_tx, mut event_rx) = mpsc::channel::<Event>(64);
     std::thread::spawn(move || {
@@ -82,7 +90,6 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         }
     });
 
-    // Viewer management
     let viewer_count = Arc::new(AtomicUsize::new(0));
     let (turn_tx, turn_rx) = watch::channel(TurnState::default());
     let (event_notify_tx, mut event_notify_rx) = mpsc::channel::<TurnEvent>(16);
@@ -110,6 +117,11 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     });
 
     let mut turn_state = TurnState::default();
+    let banner_until = if copied {
+        Some(tokio::time::Instant::now() + std::time::Duration::from_secs(5))
+    } else {
+        None
+    };
 
     loop {
         if scroll_offset > 0 {
@@ -119,6 +131,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
 
         let n = viewer_count.load(Ordering::Relaxed);
         let status = build_status(n, &turn_state, scroll_offset);
+        let show_banner = banner_until.is_some_and(|t| tokio::time::Instant::now() < t);
         let screen = vt_parser.screen();
         let cursor_pos = screen.cursor_position();
         let hide_cursor = screen.hide_cursor();
@@ -132,6 +145,17 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                 Paragraph::new(status.as_str()).style(Style::default().dim()),
                 status_area,
             );
+
+            if show_banner {
+                let msg = " viewer command copied to clipboard ";
+                let w = msg.len() as u16;
+                let x = content.right().saturating_sub(w);
+                let banner_area = Rect::new(x, content.y, w, 1);
+                frame.render_widget(
+                    Paragraph::new(msg).style(Style::default().dim()),
+                    banner_area,
+                );
+            }
 
             if scroll_offset == 0 && !hide_cursor {
                 let (row, col) = cursor_pos;
@@ -164,18 +188,14 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                         } else if shift && key.code == KeyCode::PageDown {
                             scroll_offset = scroll_offset.saturating_sub(pty_rows as usize / 2);
                         } else if key.code == KeyCode::F(9) {
-                            // F9: accept request or revoke turn
                             if turn_state.requester.is_some() {
-                                // Grant: move requester → holder
                                 turn_state.holder = turn_state.requester.take();
                                 let _ = turn_tx.send(turn_state.clone());
                             } else if turn_state.holder.is_some() {
-                                // Revoke
                                 turn_state.holder = None;
                                 let _ = turn_tx.send(turn_state.clone());
                             }
                         } else if key.code == KeyCode::F(10) {
-                            // F10: deny request
                             if turn_state.requester.is_some() {
                                 turn_state.requester = None;
                                 let _ = turn_tx.send(turn_state.clone());
@@ -208,11 +228,9 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                 match event {
                     TurnEvent::ViewerConnected | TurnEvent::ViewerDisconnected => {}
                     TurnEvent::TurnRequested { conn_id } => {
-                        // Only allow one requester at a time
                         if turn_state.holder.is_none() && turn_state.requester.is_none() {
                             turn_state.requester = Some(conn_id);
                         }
-                        // If someone else already has the turn or is requesting, ignore
                     }
                     TurnEvent::TurnReleased { conn_id } => {
                         if turn_state.holder.as_deref() == Some(&conn_id) {
@@ -229,11 +247,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         }
     }
 
-    ratatui::crossterm::execute!(
-        std::io::stdout(),
-        ratatui::crossterm::event::DisableMouseCapture
-    )?;
-    ratatui::restore();
+    cleanup();
     let _ = session.stop().await;
     endpoint.close().await;
     Ok(())
@@ -309,7 +323,6 @@ async fn handle_viewer(
 
     let result = serve_viewer(&conn, &session, &conn_id, &event_tx, turn_rx).await;
 
-    // Clean up turn state if this viewer held or requested the turn
     let _ = event_tx
         .send(TurnEvent::TurnReleased {
             conn_id: conn_id.clone(),
@@ -331,7 +344,6 @@ async fn serve_viewer(
 ) -> Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
 
-    // Read initial viewport (framed)
     let (tag, payload) = protocol::read_msg(&mut recv).await?;
     anyhow::ensure!(
         tag == vtag::VIEWPORT && payload.len() == 4,

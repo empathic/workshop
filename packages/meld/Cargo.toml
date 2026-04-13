@@ -14,6 +14,7 @@ iroh = "0.97"
 iroh-tickets = "0.4"
 ratatui = "0.30"
 vt100 = "0.16"
+arboard = { version = "3", default-features = false }
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }

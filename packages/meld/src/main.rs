@@ -100,6 +100,18 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
     }
 }
 
+pub fn draw_message(terminal: &mut ratatui::DefaultTerminal, msg: &str) -> anyhow::Result<()> {
+    use ratatui::widgets::Paragraph;
+    terminal.draw(|frame| {
+        let area = frame.area();
+        frame.render_widget(
+            Paragraph::new(msg).style(Style::default().dim()),
+            Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
+        );
+    })?;
+    Ok(())
+}
+
 /// Convert a crossterm KeyEvent to the byte sequence a PTY expects.
 pub fn key_to_bytes(key: &KeyEvent) -> Option<Vec<u8>> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);

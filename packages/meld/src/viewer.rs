@@ -48,7 +48,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         }
     });
 
-    draw_message(&mut terminal, "(meld) connecting to host... q to quit")?;
+    crate::draw_message(&mut terminal, "(meld) connecting to host... q to quit")?;
 
     let endpoint = Endpoint::bind(presets::N0)
         .await
@@ -226,17 +226,6 @@ pub async fn run(ticket_str: &str) -> Result<()> {
 
     cleanup();
     conn.close(0u32.into(), b"done");
-    Ok(())
-}
-
-fn draw_message(terminal: &mut ratatui::DefaultTerminal, msg: &str) -> Result<()> {
-    terminal.draw(|frame| {
-        let area = frame.area();
-        frame.render_widget(
-            Paragraph::new(msg).style(Style::default().dim()),
-            Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
-        );
-    })?;
     Ok(())
 }
 
