@@ -100,12 +100,19 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
     }
 }
 
+pub fn status_line(rest: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("(meld) ", Style::default().fg(Color::Magenta)),
+        Span::styled(rest.to_string(), Style::default().dim()),
+    ])
+}
+
 pub fn draw_message(terminal: &mut ratatui::DefaultTerminal, msg: &str) -> anyhow::Result<()> {
     use ratatui::widgets::Paragraph;
     terminal.draw(|frame| {
         let area = frame.area();
         frame.render_widget(
-            Paragraph::new(msg).style(Style::default().dim()),
+            Paragraph::new(status_line(msg)),
             Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
         );
     })?;

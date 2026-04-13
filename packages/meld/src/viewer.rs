@@ -48,7 +48,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         }
     });
 
-    crate::draw_message(&mut terminal, "(meld) connecting to host... q to quit")?;
+    crate::draw_message(&mut terminal, "connecting to host... q to quit")?;
 
     let endpoint = Endpoint::bind(presets::N0)
         .await
@@ -98,7 +98,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         }
 
         let status = if !got_output {
-            "(meld) connecting to host... q to quit".to_string()
+            crate::status_line("connecting to host... q to quit")
         } else {
             build_status(mode, scroll_offset)
         };
@@ -111,10 +111,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
 
             frame.render_widget(crate::PtyWidget { screen }, content);
-            frame.render_widget(
-                Paragraph::new(status.as_str()).style(Style::default().dim()),
-                status_area,
-            );
+            frame.render_widget(Paragraph::new(status.clone()), status_area);
 
             if got_output && scroll_offset == 0 && !hide_cursor {
                 let (row, col) = cursor_pos;
@@ -229,14 +226,17 @@ pub async fn run(ticket_str: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_status(mode: Mode, scroll_offset: usize) -> String {
+fn build_status(mode: Mode, scroll_offset: usize) -> Line<'static> {
     if scroll_offset > 0 {
-        return format!("(meld) ↑ {} lines — scroll down to return", scroll_offset);
+        return crate::status_line(&format!(
+            "↑ {} lines — scroll down to return",
+            scroll_offset
+        ));
     }
     match mode {
-        Mode::ReadOnly => "(meld) viewing [readonly] e to request edit · q to exit".into(),
-        Mode::Requesting => "(meld) requesting edit access...".into(),
-        Mode::Editing => "(meld) editing · Esc to release".into(),
+        Mode::ReadOnly => crate::status_line("viewing [readonly] e to request edit · q to exit"),
+        Mode::Requesting => crate::status_line("requesting edit access..."),
+        Mode::Editing => crate::status_line("editing · Esc to release"),
     }
 }
 

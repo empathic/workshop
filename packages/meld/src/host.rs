@@ -51,7 +51,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         ratatui::restore();
     };
 
-    crate::draw_message(&mut terminal, "(meld) starting...")?;
+    crate::draw_message(&mut terminal, "starting...")?;
 
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
@@ -141,10 +141,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
 
             frame.render_widget(crate::PtyWidget { screen }, content);
-            frame.render_widget(
-                Paragraph::new(status.as_str()).style(Style::default().dim()),
-                status_area,
-            );
+            frame.render_widget(Paragraph::new(status.clone()), status_area);
 
             if show_banner {
                 let msg = " viewer command copied to clipboard ";
@@ -253,23 +250,23 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-fn build_status(viewers: usize, turn: &TurnState, scroll_offset: usize) -> String {
+fn build_status(viewers: usize, turn: &TurnState, scroll_offset: usize) -> Line<'static> {
     if scroll_offset > 0 {
-        return format!("(meld) ↑ {} lines — type to return", scroll_offset);
+        return crate::status_line(&format!("↑ {} lines — type to return", scroll_offset));
     }
     if let Some(ref id) = turn.requester {
         let short = &id[..8.min(id.len())];
-        return format!("(meld) {short} requesting edit · F9 accept · F10 deny");
+        return crate::status_line(&format!("{short} requesting edit · F9 accept · F10 deny"));
     }
     if let Some(ref id) = turn.holder {
         let short = &id[..8.min(id.len())];
-        return format!("(meld) {short} editing · F9 revoke");
+        return crate::status_line(&format!("{short} editing · F9 revoke"));
     }
-    format!(
-        "(meld) hosting [{} viewer{}]",
+    crate::status_line(&format!(
+        "hosting [{} viewer{}]",
         viewers,
         if viewers == 1 { "" } else { "s" }
-    )
+    ))
 }
 
 fn drain_output(rx: &mut broadcast::Receiver<Output>, parser: &mut vt100::Parser) {
