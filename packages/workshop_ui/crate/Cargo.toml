@@ -4,4 +4,4 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-rust-embed = { version = "8", features = ["interpolate-folder-path", "deterministic-timestamps", "include-exclude"] }
+rust-embed = { version = "8", features = ["debug-embed", "interpolate-folder-path", "deterministic-timestamps", "include-exclude"] }
