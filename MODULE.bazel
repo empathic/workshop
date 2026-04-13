@@ -354,6 +354,7 @@ crate_index.spec(
 # Embedded UI assets
 crate_index.spec(
     features = [
+        "debug-embed",
         "interpolate-folder-path",
         "deterministic-timestamps",
         "include-exclude",
