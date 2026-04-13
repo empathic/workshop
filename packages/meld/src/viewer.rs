@@ -6,7 +6,6 @@ use ratatui::crossterm::event::{self, Event, KeyCode, MouseEventKind};
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc;
-use tracing::info;
 
 use crate::host::ALPN;
 use crate::protocol::{self, host as htag, viewer as vtag};
@@ -25,39 +24,21 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid ticket: {e}"))?;
 
-    info!("connecting...");
-
-    let endpoint = Endpoint::bind(presets::N0)
-        .await
-        .context("failed to bind iroh endpoint")?;
-
-    let conn = endpoint
-        .connect(ticket.endpoint_addr().clone(), ALPN)
-        .await
-        .context("failed to connect to host")?;
-
-    info!("connected");
-
-    let (mut send, mut recv) = conn.open_bi().await?;
-
-    let (mut cols, mut rows) = ratatui::crossterm::terminal::size()?;
-    let mut pty_rows = rows.saturating_sub(1).max(1);
-
-    // Send initial viewport (framed)
-    let vp = viewport_bytes(pty_rows, cols);
-    protocol::write_msg(&mut send, vtag::VIEWPORT, &vp).await?;
-
-    let mut vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
-    let mut scroll_offset: usize = 0;
-    let mut mode = Mode::ReadOnly;
-
     let mut terminal = ratatui::init();
     ratatui::crossterm::execute!(
         std::io::stdout(),
         ratatui::crossterm::event::EnableMouseCapture
     )?;
 
-    // Crossterm event reader thread
+    let cleanup = || {
+        ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::event::DisableMouseCapture
+        )
+        .ok();
+        ratatui::restore();
+    };
+
     let (event_tx, mut event_rx) = mpsc::channel::<Event>(64);
     std::thread::spawn(move || {
         while let Ok(ev) = event::read() {
@@ -67,13 +48,60 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         }
     });
 
+    draw_message(&mut terminal, "(meld) connecting to host... q to quit")?;
+
+    let endpoint = Endpoint::bind(presets::N0)
+        .await
+        .context("failed to bind iroh endpoint")?;
+
+    let (conn, mut send, mut recv) = {
+        let mut connect_fut = std::pin::pin!(async {
+            let conn = endpoint
+                .connect(ticket.endpoint_addr().clone(), ALPN)
+                .await?;
+            let streams = conn.open_bi().await?;
+            Ok::<_, anyhow::Error>((conn, streams.0, streams.1))
+        });
+        loop {
+            tokio::select! {
+                result = &mut connect_fut => {
+                    match result {
+                        Ok(val) => break val,
+                        Err(e) => { cleanup(); return Err(e); }
+                    }
+                }
+                Some(ev) = event_rx.recv() => {
+                    if matches!(ev, Event::Key(key) if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))) {
+                        cleanup();
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    };
+
+    let (mut cols, mut rows) = ratatui::crossterm::terminal::size()?;
+    let mut pty_rows = rows.saturating_sub(1).max(1);
+
+    let vp = viewport_bytes(pty_rows, cols);
+    protocol::write_msg(&mut send, vtag::VIEWPORT, &vp).await?;
+
+    let mut vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
+    let mut scroll_offset: usize = 0;
+    let mut mode = Mode::ReadOnly;
+    let mut got_output = false;
+
     loop {
         if scroll_offset > 0 {
             vt_parser.screen_mut().set_scrollback(scroll_offset);
             scroll_offset = vt_parser.screen().scrollback();
         }
 
-        let status = build_status(mode, scroll_offset);
+        let status = if !got_output {
+            "(meld) connecting to host... q to quit".to_string()
+        } else {
+            build_status(mode, scroll_offset)
+        };
         let screen = vt_parser.screen();
         let cursor_pos = screen.cursor_position();
         let hide_cursor = screen.hide_cursor();
@@ -88,7 +116,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                 status_area,
             );
 
-            if scroll_offset == 0 && !hide_cursor {
+            if got_output && scroll_offset == 0 && !hide_cursor {
                 let (row, col) = cursor_pos;
                 frame.set_cursor_position((content.x + col, content.y + row));
             }
@@ -102,12 +130,13 @@ pub async fn run(ticket_str: &str) -> Result<()> {
             result = protocol::read_msg(&mut recv) => {
                 let (tag, payload) = match result {
                     Ok(msg) => msg,
-                    Err(_) => break, // host closed connection
+                    Err(_) => break,
                 };
                 match tag {
                     htag::OUTPUT => {
                         vt_parser.process(&payload);
                         scroll_offset = 0;
+                        got_output = true;
                     }
                     htag::TURN_GRANTED => {
                         mode = Mode::Editing;
@@ -124,7 +153,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                         match mode {
                             Mode::ReadOnly => match key.code {
                                 KeyCode::Char('q') | KeyCode::Char('Q') => break,
-                                KeyCode::Char('e') | KeyCode::Char('E') => {
+                                KeyCode::Char('e') | KeyCode::Char('E') if got_output => {
                                     protocol::write_msg(&mut send, vtag::REQUEST_TURN, &[]).await?;
                                     mode = Mode::Requesting;
                                 }
@@ -195,12 +224,19 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         }
     }
 
-    ratatui::crossterm::execute!(
-        std::io::stdout(),
-        ratatui::crossterm::event::DisableMouseCapture
-    )?;
-    ratatui::restore();
+    cleanup();
     conn.close(0u32.into(), b"done");
+    Ok(())
+}
+
+fn draw_message(terminal: &mut ratatui::DefaultTerminal, msg: &str) -> Result<()> {
+    terminal.draw(|frame| {
+        let area = frame.area();
+        frame.render_widget(
+            Paragraph::new(msg).style(Style::default().dim()),
+            Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
+        );
+    })?;
     Ok(())
 }
 
