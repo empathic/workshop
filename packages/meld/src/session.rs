@@ -1,6 +1,6 @@
 use anyhow::Result;
 use pty_manager::{PtyConfig, PtyHandle, PtyOutput};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use virtual_terminal::{ClientType, VirtualTerminal};
 
 const MAX_DELTA_BYTES: usize = 1024 * 1024;
@@ -52,6 +52,7 @@ enum Command {
 #[derive(Clone)]
 pub struct Session {
     tx: mpsc::Sender<Command>,
+    effective_dims: watch::Receiver<(u16, u16)>,
 }
 
 impl Session {
@@ -77,10 +78,21 @@ impl Session {
         let (output_tx, _) = broadcast::channel::<Output>(64);
         let vt = VirtualTerminal::new(rows, cols, MAX_DELTA_BYTES, scrollback_lines);
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let (dims_tx, dims_rx) = watch::channel((rows, cols));
 
-        tokio::spawn(actor_loop(pty, pty_output_rx, vt, output_tx, cmd_rx));
+        tokio::spawn(actor_loop(
+            pty,
+            pty_output_rx,
+            vt,
+            output_tx,
+            cmd_rx,
+            dims_tx,
+        ));
 
-        Ok(Self { tx: cmd_tx })
+        Ok(Self {
+            tx: cmd_tx,
+            effective_dims: dims_rx,
+        })
     }
 
     pub async fn write_input(&self, text: &str) -> Result<usize> {
@@ -100,6 +112,11 @@ impl Session {
             .send(Command::SubscribeOutput { respond_to: tx })
             .await?;
         Ok(rx.await?)
+    }
+
+    /// Subscribe to effective PTY dimension changes.
+    pub fn subscribe_dims(&self) -> watch::Receiver<(u16, u16)> {
+        self.effective_dims.clone()
     }
 
     pub async fn update_viewport(&self, id: &str, rows: u16, cols: u16) -> Option<(u16, u16)> {
@@ -190,6 +207,7 @@ async fn actor_loop(
     mut vt: VirtualTerminal,
     output_tx: broadcast::Sender<Output>,
     mut cmd_rx: mpsc::Receiver<Command>,
+    dims_tx: watch::Sender<(u16, u16)>,
 ) {
     loop {
         tokio::select! {
@@ -216,6 +234,7 @@ async fn actor_loop(
                     Command::Resize { rows, cols, respond_to } => {
                         let result = pty.resize(rows, cols).await;
                         vt.resize(rows, cols);
+                        let _ = dims_tx.send((rows, cols));
                         let _ = respond_to.send(result);
                     }
                     Command::UpdateViewport { id, rows, cols, respond_to } => {
@@ -229,7 +248,6 @@ async fn actor_loop(
                     Command::GetRecentOutput { max_bytes, client_rows, respond_to } => {
                         let replay = vt.replay(client_rows);
                         let text = String::from_utf8_lossy(&replay);
-                        // Trim to max_bytes respecting UTF-8 boundaries
                         let trimmed = if text.len() > max_bytes {
                             let mut end = max_bytes;
                             while end > 0 && !text.is_char_boundary(end) {

@@ -86,23 +86,26 @@ pub async fn run(ticket_str: &str) -> Result<()> {
     let vp = viewport_bytes(pty_rows, cols);
     protocol::write_msg(&mut send, vtag::VIEWPORT, &vp).await?;
 
-    let mut vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
+    let mut eff_rows = pty_rows;
+    let mut eff_cols = cols;
+    let mut vt =
+        virtual_terminal::VirtualTerminal::new(eff_rows, eff_cols, 1024 * 1024, SCROLLBACK);
     let mut scroll_offset: usize = 0;
     let mut mode = Mode::ReadOnly;
     let mut got_output = false;
 
     loop {
         if scroll_offset > 0 {
-            vt_parser.screen_mut().set_scrollback(scroll_offset);
-            scroll_offset = vt_parser.screen().scrollback();
+            vt.screen_mut().set_scrollback(scroll_offset);
+            scroll_offset = vt.screen().scrollback();
         }
 
         let status = if !got_output {
             crate::status_line("connecting to host... q to quit")
         } else {
-            build_status(mode, scroll_offset)
+            build_status(mode, scroll_offset, pty_rows, cols, eff_rows, eff_cols)
         };
-        let screen = vt_parser.screen();
+        let screen = vt.screen();
         let cursor_pos = screen.cursor_position();
         let hide_cursor = screen.hide_cursor();
 
@@ -120,7 +123,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         })?;
 
         if scroll_offset > 0 {
-            vt_parser.screen_mut().set_scrollback(0);
+            vt.screen_mut().set_scrollback(0);
         }
 
         tokio::select! {
@@ -131,7 +134,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                 };
                 match tag {
                     htag::OUTPUT => {
-                        vt_parser.process(&payload);
+                        vt.process_output(&payload);
                         scroll_offset = 0;
                         got_output = true;
                     }
@@ -140,6 +143,16 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                     }
                     htag::TURN_REVOKED | htag::TURN_DENIED => {
                         mode = Mode::ReadOnly;
+                    }
+                    htag::DIMS_CHANGED if payload.len() == 4 => {
+                        let new_r = u16::from_be_bytes([payload[0], payload[1]]);
+                        let new_c = u16::from_be_bytes([payload[2], payload[3]]);
+                        if new_r != eff_rows || new_c != eff_cols {
+                            eff_rows = new_r;
+                            eff_cols = new_c;
+                            vt.resize(eff_rows, eff_cols);
+                            scroll_offset = 0;
+                        }
                     }
                     _ => {}
                 }
@@ -210,7 +223,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                         cols = new_cols;
                         rows = new_rows;
                         pty_rows = rows.saturating_sub(1).max(1);
-                        vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
+                        vt.resize(pty_rows, cols);
                         let vp = viewport_bytes(pty_rows, cols);
                         protocol::write_msg(&mut send, vtag::VIEWPORT, &vp).await?;
                         scroll_offset = 0;
@@ -226,17 +239,31 @@ pub async fn run(ticket_str: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_status(mode: Mode, scroll_offset: usize) -> Line<'static> {
+fn build_status(
+    mode: Mode,
+    scroll_offset: usize,
+    local_rows: u16,
+    local_cols: u16,
+    eff_rows: u16,
+    eff_cols: u16,
+) -> Line<'static> {
     if scroll_offset > 0 {
         return crate::status_line(&format!(
             "↑ {} lines — scroll down to return",
             scroll_offset
         ));
     }
+    let dims_note = if eff_rows != local_rows || eff_cols != local_cols {
+        format!(" · {}×{}", eff_cols, eff_rows)
+    } else {
+        String::new()
+    };
     match mode {
-        Mode::ReadOnly => crate::status_line("viewing [readonly] e to request edit · q to exit"),
-        Mode::Requesting => crate::status_line("requesting edit access..."),
-        Mode::Editing => crate::status_line("editing · Esc to release"),
+        Mode::ReadOnly => crate::status_line(&format!(
+            "viewing [readonly] e to request edit · q to exit{dims_note}"
+        )),
+        Mode::Requesting => crate::status_line(&format!("requesting edit access...{dims_note}")),
+        Mode::Editing => crate::status_line(&format!("editing · Esc to release{dims_note}")),
     }
 }
 

@@ -73,11 +73,14 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         .context("failed to spawn session")?;
 
     let mut output_rx = session.subscribe_output().await?;
+    let mut dims_rx = session.subscribe_dims();
     session
         .update_viewport_and_resize("host", pty_rows, cols)
         .await?;
 
-    let mut vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
+    let (eff_rows, eff_cols) = *dims_rx.borrow();
+    let mut vt =
+        virtual_terminal::VirtualTerminal::new(eff_rows, eff_cols, 1024 * 1024, SCROLLBACK);
     let mut scroll_offset: usize = 0;
 
     // Crossterm event reader thread
@@ -98,8 +101,17 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     let viewer_session = session.clone();
     let viewer_endpoint = endpoint.clone();
     let viewer_turn_rx = turn_rx.clone();
+    let viewer_dims_rx = dims_rx.clone();
     tokio::spawn(async move {
-        accept_viewers(viewer_endpoint, viewer_session, vc, etx, viewer_turn_rx).await;
+        accept_viewers(
+            viewer_endpoint,
+            viewer_session,
+            vc,
+            etx,
+            viewer_turn_rx,
+            viewer_dims_rx,
+        )
+        .await;
     });
     drop(event_notify_tx);
 
@@ -125,14 +137,15 @@ pub async fn run(command: Vec<String>) -> Result<()> {
 
     loop {
         if scroll_offset > 0 {
-            vt_parser.screen_mut().set_scrollback(scroll_offset);
-            scroll_offset = vt_parser.screen().scrollback();
+            vt.screen_mut().set_scrollback(scroll_offset);
+            scroll_offset = vt.screen().scrollback();
         }
 
         let n = viewer_count.load(Ordering::Relaxed);
-        let status = build_status(n, &turn_state, scroll_offset);
+        let (eff_r, eff_c) = *dims_rx.borrow();
+        let status = build_status(n, &turn_state, scroll_offset, pty_rows, cols, eff_r, eff_c);
         let show_banner = banner_until.is_some_and(|t| tokio::time::Instant::now() < t);
-        let screen = vt_parser.screen();
+        let screen = vt.screen();
         let cursor_pos = screen.cursor_position();
         let hide_cursor = screen.hide_cursor();
 
@@ -161,15 +174,15 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         })?;
 
         if scroll_offset > 0 {
-            vt_parser.screen_mut().set_scrollback(0);
+            vt.screen_mut().set_scrollback(0);
         }
 
         tokio::select! {
             result = output_rx.recv() => {
                 match result {
                     Ok(output) => {
-                        vt_parser.process(&output.data);
-                        drain_output(&mut output_rx, &mut vt_parser);
+                        vt.process_output(&output.data);
+                        drain_output(&mut output_rx, &mut vt);
                         scroll_offset = 0;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -214,11 +227,18 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                         cols = new_cols;
                         rows = new_rows;
                         pty_rows = rows.saturating_sub(1).max(1);
-                        vt_parser = vt100::Parser::new(pty_rows, cols, SCROLLBACK);
                         let _ = session.update_viewport_and_resize("host", pty_rows, cols).await;
                         scroll_offset = 0;
                     }
                     _ => {}
+                }
+            }
+            Ok(()) = dims_rx.changed() => {
+                let (new_r, new_c) = *dims_rx.borrow();
+                let (cur_r, cur_c) = vt.screen().size();
+                if new_r != cur_r || new_c != cur_c {
+                    vt.resize(new_r, new_c);
+                    scroll_offset = 0;
                 }
             }
             Some(event) = event_notify_rx.recv() => {
@@ -250,29 +270,44 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-fn build_status(viewers: usize, turn: &TurnState, scroll_offset: usize) -> Line<'static> {
+fn build_status(
+    viewers: usize,
+    turn: &TurnState,
+    scroll_offset: usize,
+    local_rows: u16,
+    local_cols: u16,
+    eff_rows: u16,
+    eff_cols: u16,
+) -> Line<'static> {
     if scroll_offset > 0 {
         return crate::status_line(&format!("↑ {} lines — type to return", scroll_offset));
     }
+    let dims_note = if eff_rows != local_rows || eff_cols != local_cols {
+        format!(" · {}×{}", eff_cols, eff_rows)
+    } else {
+        String::new()
+    };
     if let Some(ref id) = turn.requester {
         let short = &id[..8.min(id.len())];
-        return crate::status_line(&format!("{short} requesting edit · F9 accept · F10 deny"));
+        return crate::status_line(&format!(
+            "{short} requesting edit · F9 accept · F10 deny{dims_note}"
+        ));
     }
     if let Some(ref id) = turn.holder {
         let short = &id[..8.min(id.len())];
-        return crate::status_line(&format!("{short} editing · F9 revoke"));
+        return crate::status_line(&format!("{short} editing · F9 revoke{dims_note}"));
     }
     crate::status_line(&format!(
-        "hosting [{} viewer{}]",
+        "hosting [{} viewer{}]{dims_note}",
         viewers,
         if viewers == 1 { "" } else { "s" }
     ))
 }
 
-fn drain_output(rx: &mut broadcast::Receiver<Output>, parser: &mut vt100::Parser) {
+fn drain_output(rx: &mut broadcast::Receiver<Output>, vt: &mut virtual_terminal::VirtualTerminal) {
     loop {
         match rx.try_recv() {
-            Ok(output) => parser.process(&output.data),
+            Ok(output) => vt.process_output(&output.data),
             Err(broadcast::error::TryRecvError::Lagged(_)) => {}
             _ => break,
         }
@@ -285,6 +320,7 @@ async fn accept_viewers(
     viewer_count: Arc<AtomicUsize>,
     event_tx: mpsc::Sender<TurnEvent>,
     turn_rx: watch::Receiver<TurnState>,
+    dims_rx: watch::Receiver<(u16, u16)>,
 ) {
     while let Some(incoming) = endpoint.accept().await {
         let conn = match incoming.await {
@@ -298,8 +334,9 @@ async fn accept_viewers(
         let vc = viewer_count.clone();
         let etx = event_tx.clone();
         let trx = turn_rx.clone();
+        let drx = dims_rx.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_viewer(conn, s, vc, etx, trx).await {
+            if let Err(e) = handle_viewer(conn, s, vc, etx, trx, drx).await {
                 info!("viewer disconnected: {e}");
             }
         });
@@ -312,13 +349,14 @@ async fn handle_viewer(
     viewer_count: Arc<AtomicUsize>,
     event_tx: mpsc::Sender<TurnEvent>,
     turn_rx: watch::Receiver<TurnState>,
+    dims_rx: watch::Receiver<(u16, u16)>,
 ) -> Result<()> {
     let conn_id = conn.remote_id().to_string();
     info!("viewer connected: {}", &conn_id[..8]);
     viewer_count.fetch_add(1, Ordering::Relaxed);
     let _ = event_tx.send(TurnEvent::ViewerConnected).await;
 
-    let result = serve_viewer(&conn, &session, &conn_id, &event_tx, turn_rx).await;
+    let result = serve_viewer(&conn, &session, &conn_id, &event_tx, turn_rx, dims_rx).await;
 
     let _ = event_tx
         .send(TurnEvent::TurnReleased {
@@ -338,6 +376,7 @@ async fn serve_viewer(
     conn_id: &str,
     event_tx: &mpsc::Sender<TurnEvent>,
     mut turn_rx: watch::Receiver<TurnState>,
+    mut dims_rx: watch::Receiver<(u16, u16)>,
 ) -> Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
 
@@ -408,6 +447,11 @@ async fn serve_viewer(
                     }
                     _ => {}
                 }
+            }
+            Ok(()) = dims_rx.changed() => {
+                let (r, c) = *dims_rx.borrow();
+                let payload = [(r >> 8) as u8, r as u8, (c >> 8) as u8, c as u8];
+                protocol::write_msg(&mut send, htag::DIMS_CHANGED, &payload).await?;
             }
             Ok(()) = turn_rx.changed() => {
                 let state = turn_rx.borrow().clone();

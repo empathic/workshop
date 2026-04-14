@@ -15,6 +15,7 @@ pub mod host {
     pub const TURN_GRANTED: u8 = 0x02;
     pub const TURN_REVOKED: u8 = 0x03;
     pub const TURN_DENIED: u8 = 0x04;
+    pub const DIMS_CHANGED: u8 = 0x05;
 }
 
 /// Write a framed message: `[tag: u8][len: u16 BE][payload]`.
