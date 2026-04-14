@@ -4,6 +4,7 @@
 //! generates keyframe snapshots, stores deltas (raw PTY output since last
 //! keyframe), and negotiates dimensions across multiple clients.
 
+pub use vt100;
 pub mod recorder;
 pub use recorder::{VtEvent, VtRecorder, VtRecording, VtRecordingHeader};
 
@@ -126,6 +127,11 @@ impl VirtualTerminal {
     /// Access the underlying vt100 screen for cell-level reads.
     pub fn screen(&self) -> &vt100::Screen {
         self.parser.screen()
+    }
+
+    /// Mutable access to the vt100 screen.
+    pub fn screen_mut(&mut self) -> &mut vt100::Screen {
+        self.parser.screen_mut()
     }
 
     /// Current cursor position (row, col) — 0-indexed.
