@@ -26,8 +26,8 @@ struct TurnState {
 
 /// Events from viewer tasks to host main loop.
 enum TurnEvent {
-    ViewerConnected,
-    ViewerDisconnected,
+    ViewerConnected { conn_id: String, name: String },
+    ViewerDisconnected { conn_id: String },
     TurnRequested { conn_id: String },
     TurnReleased { conn_id: String },
 }
@@ -50,6 +50,8 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         .ok();
         ratatui::restore();
     };
+
+    let _host_name = crate::config::ensure_name(&mut terminal)?;
 
     crate::draw_message(&mut terminal, "starting...")?;
 
@@ -129,6 +131,8 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     });
 
     let mut turn_state = TurnState::default();
+    let mut viewer_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     let banner_until = if copied {
         Some(tokio::time::Instant::now() + std::time::Duration::from_secs(5))
     } else {
@@ -143,7 +147,16 @@ pub async fn run(command: Vec<String>) -> Result<()> {
 
         let n = viewer_count.load(Ordering::Relaxed);
         let (eff_r, eff_c) = *dims_rx.borrow();
-        let status = build_status(n, &turn_state, scroll_offset, pty_rows, cols, eff_r, eff_c);
+        let status = build_status(
+            n,
+            &turn_state,
+            &viewer_names,
+            scroll_offset,
+            pty_rows,
+            cols,
+            eff_r,
+            eff_c,
+        );
         let show_banner = banner_until.is_some_and(|t| tokio::time::Instant::now() < t);
         let screen = vt.screen();
         let cursor_pos = screen.cursor_position();
@@ -245,7 +258,12 @@ pub async fn run(command: Vec<String>) -> Result<()> {
             }
             Some(event) = event_notify_rx.recv() => {
                 match event {
-                    TurnEvent::ViewerConnected | TurnEvent::ViewerDisconnected => {}
+                    TurnEvent::ViewerConnected { conn_id, name } => {
+                        viewer_names.insert(conn_id, name);
+                    }
+                    TurnEvent::ViewerDisconnected { conn_id } => {
+                        viewer_names.remove(&conn_id);
+                    }
                     TurnEvent::TurnRequested { conn_id } => {
                         if turn_state.holder.is_none() && turn_state.requester.is_none() {
                             turn_state.requester = Some(conn_id);
@@ -275,6 +293,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
 fn build_status(
     viewers: usize,
     turn: &TurnState,
+    names: &std::collections::HashMap<String, String>,
     scroll_offset: usize,
     local_rows: u16,
     local_cols: u16,
@@ -289,12 +308,19 @@ fn build_status(
     } else {
         String::new()
     };
+    let display_name = |conn_id: &str| -> String {
+        names
+            .get(conn_id)
+            .cloned()
+            .unwrap_or_else(|| conn_id[..8.min(conn_id.len())].to_string())
+    };
     let msg = if let Some(ref id) = turn.requester {
-        let short = &id[..8.min(id.len())];
-        format!("{short} requesting edit · F9 accept · F10 deny")
+        format!(
+            "{} requesting edit · F9 accept · F10 deny",
+            display_name(id)
+        )
     } else if let Some(ref id) = turn.holder {
-        let short = &id[..8.min(id.len())];
-        format!("{short} editing · F9 revoke")
+        format!("{} editing · F9 revoke", display_name(id))
     } else {
         format!(
             "hosting [{} viewer{}]",
@@ -353,9 +379,7 @@ async fn handle_viewer(
     dims_rx: watch::Receiver<(u16, u16)>,
 ) -> Result<()> {
     let conn_id = conn.remote_id().to_string();
-    info!("viewer connected: {}", &conn_id[..8]);
     viewer_count.fetch_add(1, Ordering::Relaxed);
-    let _ = event_tx.send(TurnEvent::ViewerConnected).await;
 
     let result = serve_viewer(&conn, &session, &conn_id, &event_tx, turn_rx, dims_rx).await;
 
@@ -365,7 +389,11 @@ async fn handle_viewer(
         })
         .await;
     viewer_count.fetch_sub(1, Ordering::Relaxed);
-    let _ = event_tx.send(TurnEvent::ViewerDisconnected).await;
+    let _ = event_tx
+        .send(TurnEvent::ViewerDisconnected {
+            conn_id: conn_id.clone(),
+        })
+        .await;
     let _ = session.remove_client_and_resize(&conn_id).await;
     info!("viewer disconnected: {}", &conn_id[..8]);
     result
@@ -381,6 +409,20 @@ async fn serve_viewer(
 ) -> Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
 
+    // Read Hello (viewer name)
+    let (tag, payload) = protocol::read_msg(&mut recv).await?;
+    anyhow::ensure!(tag == vtag::HELLO, "expected hello");
+    let viewer_name = String::from_utf8_lossy(&payload).to_string();
+    info!("viewer connected: {viewer_name}");
+
+    let _ = event_tx
+        .send(TurnEvent::ViewerConnected {
+            conn_id: conn_id.to_string(),
+            name: viewer_name,
+        })
+        .await;
+
+    // Read viewport
     let (tag, payload) = protocol::read_msg(&mut recv).await?;
     anyhow::ensure!(
         tag == vtag::VIEWPORT && payload.len() == 4,

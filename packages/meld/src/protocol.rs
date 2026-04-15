@@ -7,6 +7,7 @@ pub mod viewer {
     pub const REQUEST_TURN: u8 = 0x02;
     pub const INPUT: u8 = 0x03;
     pub const RELEASE_TURN: u8 = 0x04;
+    pub const HELLO: u8 = 0x05;
 }
 
 /// Tags for host -> viewer messages.

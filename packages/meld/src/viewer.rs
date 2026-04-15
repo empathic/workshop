@@ -39,6 +39,8 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         ratatui::restore();
     };
 
+    let viewer_name = crate::config::ensure_name(&mut terminal)?;
+
     let (event_tx, mut event_rx) = mpsc::channel::<Event>(64);
     std::thread::spawn(move || {
         while let Ok(ev) = event::read() {
@@ -83,6 +85,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
     let (mut cols, mut rows) = ratatui::crossterm::terminal::size()?;
     let mut pty_rows = rows.saturating_sub(1).max(1);
 
+    protocol::write_msg(&mut send, vtag::HELLO, viewer_name.as_bytes()).await?;
     let vp = viewport_bytes(pty_rows, cols);
     protocol::write_msg(&mut send, vtag::VIEWPORT, &vp).await?;
 
