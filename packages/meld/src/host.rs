@@ -210,10 +210,12 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                                 turn_state.requester = None;
                                 let _ = turn_tx.send(turn_state.clone());
                             }
-                        } else if let Some(bytes) = crate::key_to_bytes(&key) {
-                            let text = String::from_utf8_lossy(&bytes);
-                            let _ = session.write_input(&text).await;
-                            scroll_offset = 0;
+                        } else if turn_state.holder.is_none() {
+                            if let Some(bytes) = crate::key_to_bytes(&key) {
+                                let text = String::from_utf8_lossy(&bytes);
+                                let _ = session.write_input(&text).await;
+                                scroll_offset = 0;
+                            }
                         }
                     }
                     Event::Mouse(mouse) => match mouse.kind {
@@ -287,21 +289,20 @@ fn build_status(
     } else {
         String::new()
     };
-    if let Some(ref id) = turn.requester {
+    let msg = if let Some(ref id) = turn.requester {
         let short = &id[..8.min(id.len())];
-        return crate::status_line(&format!(
-            "{short} requesting edit · F9 accept · F10 deny{dims_note}"
-        ));
-    }
-    if let Some(ref id) = turn.holder {
+        format!("{short} requesting edit · F9 accept · F10 deny")
+    } else if let Some(ref id) = turn.holder {
         let short = &id[..8.min(id.len())];
-        return crate::status_line(&format!("{short} editing · F9 revoke{dims_note}"));
-    }
-    crate::status_line(&format!(
-        "hosting [{} viewer{}]{dims_note}",
-        viewers,
-        if viewers == 1 { "" } else { "s" }
-    ))
+        format!("{short} editing · F9 revoke")
+    } else {
+        format!(
+            "hosting [{} viewer{}]",
+            viewers,
+            if viewers == 1 { "" } else { "s" }
+        )
+    };
+    crate::status_line(&format!("{msg}{dims_note}"))
 }
 
 fn drain_output(rx: &mut broadcast::Receiver<Output>, vt: &mut virtual_terminal::VirtualTerminal) {

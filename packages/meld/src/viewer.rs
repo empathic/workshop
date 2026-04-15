@@ -180,7 +180,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                                     protocol::write_msg(&mut send, vtag::RELEASE_TURN, &[]).await?;
                                     break;
                                 }
-                                KeyCode::Esc => {
+                                KeyCode::F(9) => {
                                     protocol::write_msg(&mut send, vtag::RELEASE_TURN, &[]).await?;
                                     mode = Mode::ReadOnly;
                                 }
@@ -193,7 +193,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                                 _ => {}
                             },
                             Mode::Editing => match key.code {
-                                KeyCode::Esc => {
+                                KeyCode::F(9) => {
                                     protocol::write_msg(&mut send, vtag::RELEASE_TURN, &[]).await?;
                                     mode = Mode::ReadOnly;
                                 }
@@ -258,13 +258,12 @@ fn build_status(
     } else {
         String::new()
     };
-    match mode {
-        Mode::ReadOnly => crate::status_line(&format!(
-            "viewing [readonly] e to request edit · q to exit{dims_note}"
-        )),
-        Mode::Requesting => crate::status_line(&format!("requesting edit access...{dims_note}")),
-        Mode::Editing => crate::status_line(&format!("editing · Esc to release{dims_note}")),
-    }
+    let msg = match mode {
+        Mode::ReadOnly => "viewing [readonly] e to request edit · q to exit",
+        Mode::Requesting => "requesting edit access... F9 to cancel",
+        Mode::Editing => "editing · F9 to release",
+    };
+    crate::status_line(&format!("{msg}{dims_note}"))
 }
 
 fn viewport_bytes(rows: u16, cols: u16) -> [u8; 4] {
