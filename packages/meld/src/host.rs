@@ -176,7 +176,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     endpoint.online().await;
 
     let ticket = EndpointTicket::new(endpoint.addr());
-    let view_cmd = format!("meld view {ticket}");
+    let view_cmd = format!("meld join {ticket}");
     let copied = arboard::Clipboard::new()
         .and_then(|mut cb| cb.set_text(&view_cmd))
         .is_ok();

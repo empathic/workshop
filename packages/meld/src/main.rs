@@ -27,8 +27,8 @@ enum Command {
         #[arg(trailing_var_arg = true)]
         command: Vec<String>,
     },
-    /// View a shared terminal session (readonly)
-    View {
+    /// Join a shared terminal session (readonly by default)
+    Join {
         /// iroh ticket from the host
         ticket: String,
     },
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Host { command } => host::run(command).await,
-        Command::View { ticket } => viewer::run(&ticket).await,
+        Command::Join { ticket } => viewer::run(&ticket).await,
     }
 }
 

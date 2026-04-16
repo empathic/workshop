@@ -19,21 +19,13 @@ meld host                  # shares $SHELL
 meld host claude           # shares a specific command
 ```
 
-On startup, the viewer command is copied to your clipboard:
+On startup, the join command is copied to your clipboard:
 
 ```
-meld view <ticket>
+meld join <ticket>
 ```
 
 Send that to whoever should join.
-
-**Join a session:**
-
-```sh
-meld view <ticket>
-```
-
-Viewers start read-only.
 
 ## Keybindings
 
