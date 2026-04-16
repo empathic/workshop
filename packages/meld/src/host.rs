@@ -484,10 +484,13 @@ async fn serve_viewer(
                         }
                     }
                     vtag::RELEASE_TURN => {
-                        let _ = event_tx.send(TurnEvent::TurnReleased {
-                            conn_id: conn_id.to_string(),
-                        }).await;
+                        let _ = event_tx
+                            .send(TurnEvent::TurnReleased {
+                                conn_id: conn_id.to_string(),
+                            })
+                            .await;
                     }
+                    vtag::GOODBYE => break,
                     _ => {}
                 }
             }

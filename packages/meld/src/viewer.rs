@@ -237,8 +237,12 @@ pub async fn run(ticket_str: &str) -> Result<()> {
         }
     }
 
-    cleanup();
+    let _ = protocol::write_msg(&mut send, vtag::GOODBYE, &[]).await;
+    let _ = send.finish();
+    drop(send);
+    drop(recv);
     conn.close(0u32.into(), b"done");
+    cleanup();
     Ok(())
 }
 
