@@ -7,7 +7,7 @@ members = [
     "packages/pty_manager",
     "packages/tty_wrapper",
     "packages/virtual_terminal",
-    "packages/meld",
+    "packages/mindmeld",
 ]
 # workshop_ui/crate requires WORKSHOP_UI_PATH env var pointing to SvelteKit build output.
 # workshop_desktop requires Tauri system dependencies (WebKit, etc.).
@@ -19,7 +19,7 @@ default-members = [
     "packages/pty_manager",
     "packages/tty_wrapper",
     "packages/virtual_terminal",
-    "packages/meld",
+    "packages/mindmeld",
 ]
 resolver = "2"
 
