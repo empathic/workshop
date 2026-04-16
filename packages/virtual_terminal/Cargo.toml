@@ -1,6 +1,6 @@
 [package]
 name = "virtual_terminal"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Virtual terminal with vt100 screen buffer, keyframe/delta replay, and viewport negotiation"
 

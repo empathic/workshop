@@ -7,6 +7,7 @@ members = [
     "packages/pty_manager",
     "packages/tty_wrapper",
     "packages/virtual_terminal",
+    "packages/mindmeld",
 ]
 # workshop_ui/crate requires WORKSHOP_UI_PATH env var pointing to SvelteKit build output.
 # workshop_desktop requires Tauri system dependencies (WebKit, etc.).
@@ -18,6 +19,7 @@ default-members = [
     "packages/pty_manager",
     "packages/tty_wrapper",
     "packages/virtual_terminal",
+    "packages/mindmeld",
 ]
 resolver = "2"
 
@@ -46,3 +48,6 @@ tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.13.2", features = ["v4"] }
+workshop = { path = "packages/workshop" }
+pty_manager = { path = "packages/pty_manager" }
+virtual_terminal = { path = "packages/virtual_terminal" }

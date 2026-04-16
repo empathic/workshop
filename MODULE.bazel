@@ -278,6 +278,19 @@ crate_index.spec(
     package = "ratatui",
     version = "0.30",
 )
+crate_index.spec(
+    package = "iroh",
+    version = "0.97",
+)
+crate_index.spec(
+    package = "iroh-tickets",
+    version = "0.4",
+)
+crate_index.spec(
+    default_features = False,
+    package = "arboard",
+    version = "3",
+)
 
 # File / directory utilities
 crate_index.spec(
