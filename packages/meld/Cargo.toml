@@ -1,7 +1,13 @@
 [package]
-name = "meld"
+name = "mindmeld"
 version = "0.1.0"
 edition = "2024"
+description = "Peer-to-peer terminal sharing over iroh. Host a shell, share a ticket, pair-program with turn-based edit control."
+license = "Apache-2.0"
+repository = "https://github.com/empathic/workshop"
+readme = "README.md"
+keywords = ["terminal", "iroh", "p2p", "pair-programming", "tmux"]
+categories = ["command-line-utilities", "network-programming", "development-tools"]
 
 [[bin]]
 name = "meld"
@@ -15,7 +21,7 @@ iroh-tickets = "0.4"
 ratatui = "0.30"
 arboard = { version = "3", default-features = false }
 serde = { workspace = true }
-toml = "0.8"
+toml = "1"
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
