@@ -90,10 +90,13 @@ impl HostState {
         self.viewer_names.remove(conn_id);
     }
 
-    /// A viewer requests the turn. Ignored if anyone already holds or is queued.
-    fn turn_requested(&mut self, conn_id: String) {
+    /// A viewer requests the turn. Denied if anyone already holds or is queued.
+    fn turn_requested(&mut self, conn_id: String) -> Vec<Effect> {
         if self.turn.holder.is_none() && self.turn.requester.is_none() {
             self.turn.requester = Some(conn_id);
+            vec![Effect::BroadcastTurn]
+        } else {
+            vec![Effect::BroadcastDenied(conn_id)]
         }
     }
 
@@ -353,7 +356,8 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                         state.viewer_disconnected(&conn_id);
                     }
                     TurnEvent::TurnRequested { conn_id } => {
-                        state.turn_requested(conn_id);
+                        let effects = state.turn_requested(conn_id);
+                        apply_effects(&state, effects, &turn_tx, &denied_tx);
                     }
                     TurnEvent::TurnReleased { conn_id } => {
                         let effects = state.turn_released(&conn_id);
@@ -395,12 +399,20 @@ fn build_status(
             .cloned()
             .unwrap_or_else(|| conn_id[..8.min(conn_id.len())].to_string())
     };
-    let msg = if let Some(ref id) = state.turn.requester {
-        format!(
-            "{} requesting edit · F9 accept · F10 deny",
-            display_name(id)
-        )
-    } else if let Some(ref id) = state.turn.holder {
+    if let Some(ref id) = state.turn.requester {
+        return Line::from(vec![
+            crate::meld_prefix(),
+            crate::fg(
+                format!(
+                    "{} requesting edit · F9 accept · F10 deny",
+                    display_name(id)
+                ),
+                Color::White,
+            ),
+            crate::dim(dims_note.clone()),
+        ]);
+    }
+    let msg = if let Some(ref id) = state.turn.holder {
         format!("{} editing · F9 revoke", display_name(id))
     } else {
         format!(
@@ -632,24 +644,27 @@ mod tests {
     #[test]
     fn turn_requested_sets_requester_when_idle() {
         let mut s = state();
-        s.turn_requested("alice".into());
+        let effects = s.turn_requested("alice".into());
         assert_eq!(s.turn.requester.as_deref(), Some("alice"));
+        assert_eq!(effects, vec![Effect::BroadcastTurn]);
     }
 
     #[test]
-    fn turn_requested_ignored_when_holder_exists() {
+    fn turn_requested_denied_when_holder_exists() {
         let mut s = state();
         s.turn.holder = Some("bob".into());
-        s.turn_requested("alice".into());
+        let effects = s.turn_requested("alice".into());
         assert_eq!(s.turn.requester, None);
+        assert_eq!(effects, vec![Effect::BroadcastDenied("alice".into())]);
     }
 
     #[test]
-    fn turn_requested_ignored_when_requester_already_queued() {
+    fn turn_requested_denied_when_requester_already_queued() {
         let mut s = state();
         s.turn.requester = Some("bob".into());
-        s.turn_requested("alice".into());
+        let effects = s.turn_requested("alice".into());
         assert_eq!(s.turn.requester.as_deref(), Some("bob"));
+        assert_eq!(effects, vec![Effect::BroadcastDenied("alice".into())]);
     }
 
     #[test]

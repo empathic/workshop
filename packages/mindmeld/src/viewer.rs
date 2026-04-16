@@ -96,6 +96,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
     let mut scroll_offset: usize = 0;
     let mut mode = Mode::ReadOnly;
     let mut got_output = false;
+    let mut denied_until: Option<tokio::time::Instant> = None;
 
     loop {
         if scroll_offset > 0 {
@@ -103,8 +104,14 @@ pub async fn run(ticket_str: &str) -> Result<()> {
             scroll_offset = vt.screen().scrollback();
         }
 
+        let show_denied = denied_until.is_some_and(|t| tokio::time::Instant::now() < t);
         let status = if !got_output {
             crate::status_line("connecting to host... q to quit")
+        } else if show_denied {
+            Line::from(vec![
+                crate::meld_prefix(),
+                crate::fg("edit request denied", Color::White),
+            ])
         } else {
             build_status(mode, scroll_offset, pty_rows, cols, eff_rows, eff_cols)
         };
@@ -129,7 +136,13 @@ pub async fn run(ticket_str: &str) -> Result<()> {
             vt.screen_mut().set_scrollback(0);
         }
 
+        let banner_deadline = denied_until
+            .unwrap_or_else(|| tokio::time::Instant::now() + std::time::Duration::from_secs(86400));
+
         tokio::select! {
+            _ = tokio::time::sleep_until(banner_deadline), if denied_until.is_some() => {
+                denied_until = None;
+            }
             result = protocol::read_msg(&mut recv) => {
                 let (tag, payload) = match result {
                     Ok(msg) => msg,
@@ -144,8 +157,14 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                     htag::TURN_GRANTED => {
                         mode = Mode::Editing;
                     }
-                    htag::TURN_REVOKED | htag::TURN_DENIED => {
+                    htag::TURN_REVOKED => {
                         mode = Mode::ReadOnly;
+                    }
+                    htag::TURN_DENIED => {
+                        mode = Mode::ReadOnly;
+                        denied_until = Some(
+                            tokio::time::Instant::now() + std::time::Duration::from_secs(3),
+                        );
                     }
                     htag::DIMS_CHANGED if payload.len() == 4 => {
                         let new_r = u16::from_be_bytes([payload[0], payload[1]]);

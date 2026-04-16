@@ -102,11 +102,20 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
     }
 }
 
+pub fn meld_prefix() -> Span<'static> {
+    Span::styled("(meld) ", Style::default().fg(Color::Magenta))
+}
+
+pub fn dim(text: impl Into<String>) -> Span<'static> {
+    Span::styled(text.into(), Style::default().dim())
+}
+
+pub fn fg(text: impl Into<String>, color: Color) -> Span<'static> {
+    Span::styled(text.into(), Style::default().fg(color))
+}
+
 pub fn status_line(rest: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled("(meld) ", Style::default().fg(Color::Magenta)),
-        Span::styled(rest.to_string(), Style::default().dim()),
-    ])
+    Line::from(vec![meld_prefix(), dim(rest)])
 }
 
 pub fn draw_message(terminal: &mut ratatui::DefaultTerminal, msg: &str) -> anyhow::Result<()> {
