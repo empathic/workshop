@@ -5,13 +5,6 @@ use virtual_terminal::{ClientType, VirtualTerminal};
 
 const MAX_DELTA_BYTES: usize = 1024 * 1024;
 
-/// PTY output enriched with cursor position from the VirtualTerminal.
-#[derive(Debug, Clone)]
-pub struct Output {
-    pub data: Vec<u8>,
-    pub cursor: (u16, u16),
-}
-
 enum Command {
     WriteInput {
         text: String,
@@ -32,13 +25,12 @@ enum Command {
         id: String,
         respond_to: oneshot::Sender<Option<(u16, u16)>>,
     },
-    GetRecentOutput {
-        max_bytes: usize,
+    GetReplay {
         client_rows: u16,
-        respond_to: oneshot::Sender<Vec<String>>,
+        respond_to: oneshot::Sender<Vec<u8>>,
     },
     SubscribeOutput {
-        respond_to: oneshot::Sender<broadcast::Receiver<Output>>,
+        respond_to: oneshot::Sender<broadcast::Receiver<Vec<u8>>>,
     },
     GetPid {
         respond_to: oneshot::Sender<Option<u32>>,
@@ -64,18 +56,19 @@ impl Session {
         rows: u16,
         cols: u16,
         scrollback_lines: usize,
+        session_id: &str,
     ) -> Result<Self> {
         let config = PtyConfig {
             command: command.to_string(),
             args: args.to_vec(),
             working_dir: Some(working_dir.to_string()),
-            env: Vec::new(),
+            env: vec![("MELD_SESSION_ID".into(), session_id.to_string())],
             rows,
             cols,
         };
         let pty = pty_manager::pty::PtyActor::spawn(config)?;
         let pty_output_rx = pty.subscribe();
-        let (output_tx, _) = broadcast::channel::<Output>(64);
+        let (output_tx, _) = broadcast::channel::<Vec<u8>>(64);
         let vt = VirtualTerminal::new(rows, cols, MAX_DELTA_BYTES, scrollback_lines);
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let (dims_tx, dims_rx) = watch::channel((rows, cols));
@@ -106,7 +99,7 @@ impl Session {
         Ok(rx.await??)
     }
 
-    pub async fn subscribe_output(&self) -> Result<broadcast::Receiver<Output>> {
+    pub async fn subscribe_output(&self) -> Result<broadcast::Receiver<Vec<u8>>> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send(Command::SubscribeOutput { respond_to: tx })
@@ -160,12 +153,11 @@ impl Session {
         Ok(())
     }
 
-    pub async fn get_recent_output(&self, max_bytes: usize, client_rows: u16) -> Vec<String> {
+    pub async fn get_replay(&self, client_rows: u16) -> Vec<u8> {
         let (tx, rx) = oneshot::channel();
         let _ = self
             .tx
-            .send(Command::GetRecentOutput {
-                max_bytes,
+            .send(Command::GetReplay {
                 client_rows,
                 respond_to: tx,
             })
@@ -205,24 +197,36 @@ async fn actor_loop(
     pty: PtyHandle,
     mut pty_output_rx: broadcast::Receiver<PtyOutput>,
     mut vt: VirtualTerminal,
-    output_tx: broadcast::Sender<Output>,
+    output_tx: broadcast::Sender<Vec<u8>>,
     mut cmd_rx: mpsc::Receiver<Command>,
     dims_tx: watch::Sender<(u16, u16)>,
 ) {
+    // pty_manager's PtyHandle holds an output_tx clone, so pty_output_rx never
+    // closes on its own when the child exits — only the reader thread's clone
+    // drops. And the pty actor only re-checks child exit after processing a
+    // message, and replies with cached state *before* that check. So the first
+    // tick after exit still reports running=true; detection needs ~2 ticks —
+    // keep the interval tight so the exit latency stays imperceptible.
+    let mut exit_check = tokio::time::interval(std::time::Duration::from_millis(100));
+    exit_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     loop {
         tokio::select! {
             result = pty_output_rx.recv() => {
                 match result {
                     Ok(pty_output) => {
                         vt.process_output(&pty_output.data);
-                        let cursor = vt.cursor_position();
-                        let _ = output_tx.send(Output {
-                            data: pty_output.data,
-                            cursor,
-                        });
+                        let _ = output_tx.send(pty_output.data);
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            _ = exit_check.tick() => {
+                match pty.state().await {
+                    Ok(state) if !state.running => break,
+                    Err(_) => break,
+                    _ => {}
                 }
             }
             cmd = cmd_rx.recv() => {
@@ -245,19 +249,8 @@ async fn actor_loop(
                         let result = vt.remove_client(&id);
                         let _ = respond_to.send(result);
                     }
-                    Command::GetRecentOutput { max_bytes, client_rows, respond_to } => {
-                        let replay = vt.replay(client_rows);
-                        let text = String::from_utf8_lossy(&replay);
-                        let trimmed = if text.len() > max_bytes {
-                            let mut end = max_bytes;
-                            while end > 0 && !text.is_char_boundary(end) {
-                                end -= 1;
-                            }
-                            &text[..end]
-                        } else {
-                            &text
-                        };
-                        let _ = respond_to.send(vec![trimmed.to_string()]);
+                    Command::GetReplay { client_rows, respond_to } => {
+                        let _ = respond_to.send(vt.replay(client_rows));
                     }
                     Command::SubscribeOutput { respond_to } => {
                         let _ = respond_to.send(output_tx.subscribe());

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use iroh::endpoint::{RecvStream, SendStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Tags for viewer -> host messages.
 pub mod viewer {
@@ -20,26 +20,69 @@ pub mod host {
     pub const DIMS_CHANGED: u8 = 0x05;
 }
 
-/// Write a framed message: `[tag: u8][len: u16 BE][payload]`.
-pub async fn write_msg(send: &mut SendStream, tag: u8, payload: &[u8]) -> Result<()> {
-    let len = payload.len() as u16;
-    let header = [tag, (len >> 8) as u8, len as u8];
-    send.write_all(&header).await?;
+/// Frame layout: `[tag: u8][len: u32 BE][payload]`.
+pub async fn write_msg<W: AsyncWrite + Unpin>(w: &mut W, tag: u8, payload: &[u8]) -> Result<()> {
+    let len = payload.len() as u32;
+    let mut header = [0u8; 5];
+    header[0] = tag;
+    header[1..5].copy_from_slice(&len.to_be_bytes());
+    w.write_all(&header).await?;
     if !payload.is_empty() {
-        send.write_all(payload).await?;
+        w.write_all(payload).await?;
     }
     Ok(())
 }
 
-/// Read a framed message. Returns `(tag, payload)`.
-pub async fn read_msg(recv: &mut RecvStream) -> Result<(u8, Vec<u8>)> {
-    let mut header = [0u8; 3];
-    recv.read_exact(&mut header).await?;
+pub async fn read_msg<R: AsyncRead + Unpin>(r: &mut R) -> Result<(u8, Vec<u8>)> {
+    let mut header = [0u8; 5];
+    r.read_exact(&mut header).await?;
     let tag = header[0];
-    let len = u16::from_be_bytes([header[1], header[2]]) as usize;
+    let len = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
     let mut payload = vec![0u8; len];
     if len > 0 {
-        recv.read_exact(&mut payload).await?;
+        r.read_exact(&mut payload).await?;
     }
     Ok((tag, payload))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::duplex;
+
+    async fn roundtrip(tag: u8, payload: Vec<u8>) {
+        let (mut a, mut b) = duplex(1 << 20);
+        let expected = payload.clone();
+        let writer = tokio::spawn(async move {
+            write_msg(&mut a, tag, &payload).await.unwrap();
+        });
+        let (got_tag, got_payload) = read_msg(&mut b).await.unwrap();
+        writer.await.unwrap();
+        assert_eq!(got_tag, tag);
+        assert_eq!(got_payload, expected);
+    }
+
+    #[tokio::test]
+    async fn empty_payload() {
+        roundtrip(0x42, vec![]).await;
+    }
+
+    #[tokio::test]
+    async fn small_payload() {
+        roundtrip(0x01, b"hello world".to_vec()).await;
+    }
+
+    #[tokio::test]
+    async fn payload_above_u16_limit() {
+        // Regression: would have truncated under the old u16 length header.
+        let payload = vec![0xABu8; 128 * 1024];
+        roundtrip(0x01, payload).await;
+    }
+
+    #[tokio::test]
+    async fn preserves_all_tag_values() {
+        for tag in [0u8, 1, 127, 128, 255] {
+            roundtrip(tag, vec![tag; 7]).await;
+        }
+    }
 }

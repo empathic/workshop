@@ -166,7 +166,7 @@ pub async fn run(ticket_str: &str) -> Result<()> {
                         match mode {
                             Mode::ReadOnly => match key.code {
                                 KeyCode::Char('q') | KeyCode::Char('Q') => break,
-                                KeyCode::Char('e') | KeyCode::Char('E') if got_output => {
+                                KeyCode::F(9) if got_output => {
                                     protocol::write_msg(&mut send, vtag::REQUEST_TURN, &[]).await?;
                                     mode = Mode::Requesting;
                                 }
@@ -266,7 +266,7 @@ fn build_status(
         String::new()
     };
     let msg = match mode {
-        Mode::ReadOnly => "viewing [readonly] e to request edit · q to exit",
+        Mode::ReadOnly => "viewing [readonly] F9 to request edit · q to exit",
         Mode::Requesting => "requesting edit access... F9 to cancel",
         Mode::Editing => "editing · F9 to release",
     };

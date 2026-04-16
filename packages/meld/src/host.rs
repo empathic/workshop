@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -8,17 +9,17 @@ use iroh_tickets::endpoint::EndpointTicket;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
-use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{info, warn};
 
 use crate::protocol::{self, host as htag, viewer as vtag};
-use crate::session::{Output, Session};
+use crate::session::Session;
 
 pub const ALPN: &[u8] = b"meld/term/0";
 const SCROLLBACK: usize = 10_000;
 
 /// Turn state broadcast from host main loop to viewer tasks.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug, PartialEq)]
 struct TurnState {
     holder: Option<String>,
     requester: Option<String>,
@@ -30,6 +31,118 @@ enum TurnEvent {
     ViewerDisconnected { conn_id: String },
     TurnRequested { conn_id: String },
     TurnReleased { conn_id: String },
+}
+
+/// Side-effects emitted by `HostState` transitions.
+#[derive(Debug, PartialEq)]
+enum Effect {
+    BroadcastTurn,
+    BroadcastDenied(String),
+    UpdateActiveUser,
+}
+
+/// Authoritative turn + viewer state. All methods are pure: they mutate
+/// the struct and return the side-effects the caller must perform.
+struct HostState {
+    turn: TurnState,
+    viewer_names: HashMap<String, String>,
+    host_name: String,
+    session_id: String,
+}
+
+impl HostState {
+    fn new(host_name: String, session_id: String) -> Self {
+        Self {
+            turn: TurnState::default(),
+            viewer_names: HashMap::new(),
+            host_name,
+            session_id,
+        }
+    }
+
+    /// F9: promote requester → holder, or revoke current holder.
+    fn accept_or_revoke(&mut self) -> Vec<Effect> {
+        if self.turn.requester.is_some() {
+            self.turn.holder = self.turn.requester.take();
+            vec![Effect::BroadcastTurn, Effect::UpdateActiveUser]
+        } else if self.turn.holder.is_some() {
+            self.turn.holder = None;
+            vec![Effect::BroadcastTurn, Effect::UpdateActiveUser]
+        } else {
+            vec![]
+        }
+    }
+
+    /// F10: deny the current requester.
+    fn deny(&mut self) -> Vec<Effect> {
+        if let Some(req) = self.turn.requester.take() {
+            vec![Effect::BroadcastDenied(req), Effect::BroadcastTurn]
+        } else {
+            vec![]
+        }
+    }
+
+    fn viewer_connected(&mut self, conn_id: String, name: String) {
+        self.viewer_names.insert(conn_id, name);
+    }
+
+    fn viewer_disconnected(&mut self, conn_id: &str) {
+        self.viewer_names.remove(conn_id);
+    }
+
+    /// A viewer requests the turn. Ignored if anyone already holds or is queued.
+    fn turn_requested(&mut self, conn_id: String) {
+        if self.turn.holder.is_none() && self.turn.requester.is_none() {
+            self.turn.requester = Some(conn_id);
+        }
+    }
+
+    /// A viewer released the turn (explicit release, or connection dropped).
+    fn turn_released(&mut self, conn_id: &str) -> Vec<Effect> {
+        let mut effects = vec![];
+        if self.turn.holder.as_deref() == Some(conn_id) {
+            self.turn.holder = None;
+            effects.push(Effect::BroadcastTurn);
+            effects.push(Effect::UpdateActiveUser);
+        }
+        if self.turn.requester.as_deref() == Some(conn_id) {
+            self.turn.requester = None;
+        }
+        effects
+    }
+
+    /// Name of whoever currently drives the session (for `active_user` and UI).
+    fn active_user(&self) -> &str {
+        match &self.turn.holder {
+            Some(id) => self
+                .viewer_names
+                .get(id)
+                .map(String::as_str)
+                .unwrap_or(&self.host_name),
+            None => &self.host_name,
+        }
+    }
+}
+
+fn apply_effects(
+    state: &HostState,
+    effects: Vec<Effect>,
+    turn_tx: &watch::Sender<TurnState>,
+    denied_tx: &broadcast::Sender<String>,
+) {
+    for eff in effects {
+        match eff {
+            Effect::BroadcastTurn => {
+                let _ = turn_tx.send(state.turn.clone());
+            }
+            Effect::BroadcastDenied(id) => {
+                let _ = denied_tx.send(id);
+            }
+            Effect::UpdateActiveUser => {
+                crate::session_dir::write_active_user(&state.session_id, state.active_user());
+            }
+        }
+    }
 }
 
 pub async fn run(command: Vec<String>) -> Result<()> {
@@ -51,7 +164,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
         ratatui::restore();
     };
 
-    let _host_name = crate::config::ensure_name(&mut terminal)?;
+    let host_name = crate::config::ensure_name(&mut terminal)?;
 
     crate::draw_message(&mut terminal, "starting...")?;
 
@@ -71,7 +184,10 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     let (mut cols, mut rows) = ratatui::crossterm::terminal::size()?;
     let mut pty_rows = rows.saturating_sub(1).max(1);
 
-    let session = Session::spawn(&cmd, &args, &cwd, pty_rows, cols, SCROLLBACK)
+    let session_id = uuid::Uuid::new_v4().to_string();
+    crate::session_dir::write_active_user(&session_id, &host_name);
+
+    let session = Session::spawn(&cmd, &args, &cwd, pty_rows, cols, SCROLLBACK, &session_id)
         .context("failed to spawn session")?;
 
     let mut output_rx = session.subscribe_output().await?;
@@ -97,6 +213,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
 
     let viewer_count = Arc::new(AtomicUsize::new(0));
     let (turn_tx, turn_rx) = watch::channel(TurnState::default());
+    let (denied_tx, _) = broadcast::channel::<String>(16);
     let (event_notify_tx, mut event_notify_rx) = mpsc::channel::<TurnEvent>(16);
     let vc = viewer_count.clone();
     let etx = event_notify_tx.clone();
@@ -104,6 +221,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
     let viewer_endpoint = endpoint.clone();
     let viewer_turn_rx = turn_rx.clone();
     let viewer_dims_rx = dims_rx.clone();
+    let viewer_denied_tx = denied_tx.clone();
     tokio::spawn(async move {
         accept_viewers(
             viewer_endpoint,
@@ -112,27 +230,13 @@ pub async fn run(command: Vec<String>) -> Result<()> {
             etx,
             viewer_turn_rx,
             viewer_dims_rx,
+            viewer_denied_tx,
         )
         .await;
     });
     drop(event_notify_tx);
 
-    // PTY exit detection
-    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-    let exit_session = session.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            if exit_session.get_pid().await.is_none() {
-                let _ = shutdown_tx.send(());
-                return;
-            }
-        }
-    });
-
-    let mut turn_state = TurnState::default();
-    let mut viewer_names: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut state = HostState::new(host_name, session_id);
     let banner_until = if copied {
         Some(tokio::time::Instant::now() + std::time::Duration::from_secs(5))
     } else {
@@ -147,16 +251,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
 
         let n = viewer_count.load(Ordering::Relaxed);
         let (eff_r, eff_c) = *dims_rx.borrow();
-        let status = build_status(
-            n,
-            &turn_state,
-            &viewer_names,
-            scroll_offset,
-            pty_rows,
-            cols,
-            eff_r,
-            eff_c,
-        );
+        let status = build_status(n, &state, scroll_offset, pty_rows, cols, eff_r, eff_c);
         let show_banner = banner_until.is_some_and(|t| tokio::time::Instant::now() < t);
         let screen = vt.screen();
         let cursor_pos = screen.cursor_position();
@@ -194,7 +289,7 @@ pub async fn run(command: Vec<String>) -> Result<()> {
             result = output_rx.recv() => {
                 match result {
                     Ok(output) => {
-                        vt.process_output(&output.data);
+                        vt.process_output(&output);
                         drain_output(&mut output_rx, &mut vt);
                         scroll_offset = 0;
                     }
@@ -211,19 +306,12 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                         } else if shift && key.code == KeyCode::PageDown {
                             scroll_offset = scroll_offset.saturating_sub(pty_rows as usize / 2);
                         } else if key.code == KeyCode::F(9) {
-                            if turn_state.requester.is_some() {
-                                turn_state.holder = turn_state.requester.take();
-                                let _ = turn_tx.send(turn_state.clone());
-                            } else if turn_state.holder.is_some() {
-                                turn_state.holder = None;
-                                let _ = turn_tx.send(turn_state.clone());
-                            }
+                            let effects = state.accept_or_revoke();
+                            apply_effects(&state, effects, &turn_tx, &denied_tx);
                         } else if key.code == KeyCode::F(10) {
-                            if turn_state.requester.is_some() {
-                                turn_state.requester = None;
-                                let _ = turn_tx.send(turn_state.clone());
-                            }
-                        } else if turn_state.holder.is_none() {
+                            let effects = state.deny();
+                            apply_effects(&state, effects, &turn_tx, &denied_tx);
+                        } else if state.turn.holder.is_none() {
                             if let Some(bytes) = crate::key_to_bytes(&key) {
                                 let text = String::from_utf8_lossy(&bytes);
                                 let _ = session.write_input(&text).await;
@@ -259,41 +347,33 @@ pub async fn run(command: Vec<String>) -> Result<()> {
             Some(event) = event_notify_rx.recv() => {
                 match event {
                     TurnEvent::ViewerConnected { conn_id, name } => {
-                        viewer_names.insert(conn_id, name);
+                        state.viewer_connected(conn_id, name);
                     }
                     TurnEvent::ViewerDisconnected { conn_id } => {
-                        viewer_names.remove(&conn_id);
+                        state.viewer_disconnected(&conn_id);
                     }
                     TurnEvent::TurnRequested { conn_id } => {
-                        if turn_state.holder.is_none() && turn_state.requester.is_none() {
-                            turn_state.requester = Some(conn_id);
-                        }
+                        state.turn_requested(conn_id);
                     }
                     TurnEvent::TurnReleased { conn_id } => {
-                        if turn_state.holder.as_deref() == Some(&conn_id) {
-                            turn_state.holder = None;
-                            let _ = turn_tx.send(turn_state.clone());
-                        }
-                        if turn_state.requester.as_deref() == Some(&conn_id) {
-                            turn_state.requester = None;
-                        }
+                        let effects = state.turn_released(&conn_id);
+                        apply_effects(&state, effects, &turn_tx, &denied_tx);
                     }
                 }
             }
-            _ = &mut shutdown_rx => break,
         }
     }
 
     cleanup();
     let _ = session.stop().await;
     endpoint.close().await;
+    crate::session_dir::cleanup_session(&state.session_id);
     Ok(())
 }
 
 fn build_status(
     viewers: usize,
-    turn: &TurnState,
-    names: &std::collections::HashMap<String, String>,
+    state: &HostState,
     scroll_offset: usize,
     local_rows: u16,
     local_cols: u16,
@@ -309,17 +389,18 @@ fn build_status(
         String::new()
     };
     let display_name = |conn_id: &str| -> String {
-        names
+        state
+            .viewer_names
             .get(conn_id)
             .cloned()
             .unwrap_or_else(|| conn_id[..8.min(conn_id.len())].to_string())
     };
-    let msg = if let Some(ref id) = turn.requester {
+    let msg = if let Some(ref id) = state.turn.requester {
         format!(
             "{} requesting edit · F9 accept · F10 deny",
             display_name(id)
         )
-    } else if let Some(ref id) = turn.holder {
+    } else if let Some(ref id) = state.turn.holder {
         format!("{} editing · F9 revoke", display_name(id))
     } else {
         format!(
@@ -331,10 +412,10 @@ fn build_status(
     crate::status_line(&format!("{msg}{dims_note}"))
 }
 
-fn drain_output(rx: &mut broadcast::Receiver<Output>, vt: &mut virtual_terminal::VirtualTerminal) {
+fn drain_output(rx: &mut broadcast::Receiver<Vec<u8>>, vt: &mut virtual_terminal::VirtualTerminal) {
     loop {
         match rx.try_recv() {
-            Ok(output) => vt.process_output(&output.data),
+            Ok(output) => vt.process_output(&output),
             Err(broadcast::error::TryRecvError::Lagged(_)) => {}
             _ => break,
         }
@@ -348,6 +429,7 @@ async fn accept_viewers(
     event_tx: mpsc::Sender<TurnEvent>,
     turn_rx: watch::Receiver<TurnState>,
     dims_rx: watch::Receiver<(u16, u16)>,
+    denied_tx: broadcast::Sender<String>,
 ) {
     while let Some(incoming) = endpoint.accept().await {
         let conn = match incoming.await {
@@ -362,8 +444,9 @@ async fn accept_viewers(
         let etx = event_tx.clone();
         let trx = turn_rx.clone();
         let drx = dims_rx.clone();
+        let denied_rx = denied_tx.subscribe();
         tokio::spawn(async move {
-            if let Err(e) = handle_viewer(conn, s, vc, etx, trx, drx).await {
+            if let Err(e) = handle_viewer(conn, s, vc, etx, trx, drx, denied_rx).await {
                 info!("viewer disconnected: {e}");
             }
         });
@@ -377,11 +460,15 @@ async fn handle_viewer(
     event_tx: mpsc::Sender<TurnEvent>,
     turn_rx: watch::Receiver<TurnState>,
     dims_rx: watch::Receiver<(u16, u16)>,
+    denied_rx: broadcast::Receiver<String>,
 ) -> Result<()> {
     let conn_id = conn.remote_id().to_string();
     viewer_count.fetch_add(1, Ordering::Relaxed);
 
-    let result = serve_viewer(&conn, &session, &conn_id, &event_tx, turn_rx, dims_rx).await;
+    let result = serve_viewer(
+        &conn, &session, &conn_id, &event_tx, turn_rx, dims_rx, denied_rx,
+    )
+    .await;
 
     let _ = event_tx
         .send(TurnEvent::TurnReleased {
@@ -406,6 +493,7 @@ async fn serve_viewer(
     event_tx: &mpsc::Sender<TurnEvent>,
     mut turn_rx: watch::Receiver<TurnState>,
     mut dims_rx: watch::Receiver<(u16, u16)>,
+    mut denied_rx: broadcast::Receiver<String>,
 ) -> Result<()> {
     let (mut send, mut recv) = conn.accept_bi().await?;
 
@@ -436,23 +524,18 @@ async fn serve_viewer(
         .await?;
 
     // Send replay
-    let replay = session.get_recent_output(64 * 1024, rows).await;
-    for chunk in &replay {
-        protocol::write_msg(&mut send, htag::OUTPUT, chunk.as_bytes()).await?;
-    }
+    let replay = session.get_replay(rows).await;
+    protocol::write_msg(&mut send, htag::OUTPUT, &replay).await?;
 
     let mut output_rx = session.subscribe_output().await?;
-
-    // Track what this viewer's last-known turn state was, to send grant/revoke only on transitions
     let mut was_holder = false;
-    let mut was_denied = false;
 
     loop {
         tokio::select! {
             result = output_rx.recv() => {
                 match result {
                     Ok(output) => {
-                        protocol::write_msg(&mut send, htag::OUTPUT, &output.data).await?;
+                        protocol::write_msg(&mut send, htag::OUTPUT, &output).await?;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!("viewer {} lagged by {n}", &conn_id[..8]);
@@ -476,7 +559,6 @@ async fn serve_viewer(
                         }).await;
                     }
                     vtag::INPUT => {
-                        // Only forward if this viewer holds the turn
                         let state = turn_rx.borrow().clone();
                         if state.holder.as_deref() == Some(conn_id) {
                             let text = String::from_utf8_lossy(&payload);
@@ -500,21 +582,18 @@ async fn serve_viewer(
                 protocol::write_msg(&mut send, htag::DIMS_CHANGED, &payload).await?;
             }
             Ok(()) = turn_rx.changed() => {
-                let state = turn_rx.borrow().clone();
-                let is_holder = state.holder.as_deref() == Some(conn_id);
-                let is_requester = state.requester.as_deref() == Some(conn_id);
-
+                let is_holder = turn_rx.borrow().holder.as_deref() == Some(conn_id);
                 if is_holder && !was_holder {
                     protocol::write_msg(&mut send, htag::TURN_GRANTED, &[]).await?;
                     was_holder = true;
-                    was_denied = false;
                 } else if !is_holder && was_holder {
                     protocol::write_msg(&mut send, htag::TURN_REVOKED, &[]).await?;
                     was_holder = false;
-                } else if !is_requester && !is_holder && !was_denied && !was_holder {
-                    // Was requesting but now cleared (denied)
+                }
+            }
+            Ok(denied_id) = denied_rx.recv() => {
+                if denied_id == conn_id {
                     protocol::write_msg(&mut send, htag::TURN_DENIED, &[]).await?;
-                    was_denied = true;
                 }
             }
         }
@@ -531,5 +610,194 @@ fn resolve_command(command: Vec<String>) -> (String, Vec<String>) {
         let cmd = command[0].clone();
         let args = command[1..].to_vec();
         (cmd, args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> HostState {
+        HostState::new("host".into(), "sess".into())
+    }
+
+    #[test]
+    fn initial_state_is_empty() {
+        let s = state();
+        assert_eq!(s.turn, TurnState::default());
+        assert!(s.viewer_names.is_empty());
+        assert_eq!(s.active_user(), "host");
+    }
+
+    #[test]
+    fn turn_requested_sets_requester_when_idle() {
+        let mut s = state();
+        s.turn_requested("alice".into());
+        assert_eq!(s.turn.requester.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn turn_requested_ignored_when_holder_exists() {
+        let mut s = state();
+        s.turn.holder = Some("bob".into());
+        s.turn_requested("alice".into());
+        assert_eq!(s.turn.requester, None);
+    }
+
+    #[test]
+    fn turn_requested_ignored_when_requester_already_queued() {
+        let mut s = state();
+        s.turn.requester = Some("bob".into());
+        s.turn_requested("alice".into());
+        assert_eq!(s.turn.requester.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn f9_promotes_requester_to_holder() {
+        let mut s = state();
+        s.viewer_connected("alice".into(), "Alice".into());
+        s.turn_requested("alice".into());
+        let effects = s.accept_or_revoke();
+        assert_eq!(s.turn.holder.as_deref(), Some("alice"));
+        assert_eq!(s.turn.requester, None);
+        assert_eq!(
+            effects,
+            vec![Effect::BroadcastTurn, Effect::UpdateActiveUser]
+        );
+        assert_eq!(s.active_user(), "Alice");
+    }
+
+    #[test]
+    fn f9_revokes_holder_when_no_requester() {
+        let mut s = state();
+        s.viewer_connected("alice".into(), "Alice".into());
+        s.turn.holder = Some("alice".into());
+        let effects = s.accept_or_revoke();
+        assert_eq!(s.turn.holder, None);
+        assert_eq!(
+            effects,
+            vec![Effect::BroadcastTurn, Effect::UpdateActiveUser]
+        );
+        assert_eq!(s.active_user(), "host");
+    }
+
+    #[test]
+    fn f9_is_noop_when_idle() {
+        let mut s = state();
+        let effects = s.accept_or_revoke();
+        assert!(effects.is_empty());
+        assert_eq!(s.turn, TurnState::default());
+    }
+
+    #[test]
+    fn f10_denies_requester_and_broadcasts_identity() {
+        let mut s = state();
+        s.turn_requested("alice".into());
+        let effects = s.deny();
+        assert_eq!(s.turn.requester, None);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::BroadcastDenied("alice".into()),
+                Effect::BroadcastTurn,
+            ],
+        );
+    }
+
+    #[test]
+    fn f10_is_noop_when_no_requester() {
+        let mut s = state();
+        let effects = s.deny();
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn f10_does_not_affect_holder() {
+        let mut s = state();
+        s.turn.holder = Some("alice".into());
+        let effects = s.deny();
+        assert!(effects.is_empty());
+        assert_eq!(s.turn.holder.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn turn_released_clears_holder_and_broadcasts() {
+        let mut s = state();
+        s.viewer_connected("alice".into(), "Alice".into());
+        s.turn.holder = Some("alice".into());
+        let effects = s.turn_released("alice");
+        assert_eq!(s.turn.holder, None);
+        assert_eq!(
+            effects,
+            vec![Effect::BroadcastTurn, Effect::UpdateActiveUser]
+        );
+    }
+
+    #[test]
+    fn turn_released_by_requester_clears_silently() {
+        let mut s = state();
+        s.turn.requester = Some("alice".into());
+        let effects = s.turn_released("alice");
+        // Requester change is not broadcast — the next turn_tx send will reflect it,
+        // but releasing the queue slot alone is not a turn-state change viewers care about.
+        assert_eq!(s.turn.requester, None);
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn turn_released_by_stranger_is_noop() {
+        let mut s = state();
+        s.turn.holder = Some("alice".into());
+        let effects = s.turn_released("eve");
+        assert!(effects.is_empty());
+        assert_eq!(s.turn.holder.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn turn_released_clears_both_slots_if_same_conn() {
+        let mut s = state();
+        s.turn.holder = Some("alice".into());
+        s.turn.requester = Some("alice".into());
+        let effects = s.turn_released("alice");
+        assert_eq!(s.turn, TurnState::default());
+        assert_eq!(
+            effects,
+            vec![Effect::BroadcastTurn, Effect::UpdateActiveUser]
+        );
+    }
+
+    #[test]
+    fn viewer_disconnect_removes_name() {
+        let mut s = state();
+        s.viewer_connected("alice".into(), "Alice".into());
+        s.viewer_disconnected("alice");
+        assert!(s.viewer_names.is_empty());
+    }
+
+    #[test]
+    fn active_user_falls_back_to_host_if_holder_name_missing() {
+        // If a viewer held the turn and then disconnected without the main
+        // loop seeing the release first, the name map might not have them.
+        let mut s = state();
+        s.turn.holder = Some("ghost".into());
+        assert_eq!(s.active_user(), "host");
+    }
+
+    #[test]
+    fn request_grant_revoke_round_trip() {
+        let mut s = state();
+        s.viewer_connected("alice".into(), "Alice".into());
+
+        s.turn_requested("alice".into());
+        assert_eq!(s.turn.requester.as_deref(), Some("alice"));
+
+        let _ = s.accept_or_revoke();
+        assert_eq!(s.turn.holder.as_deref(), Some("alice"));
+        assert_eq!(s.turn.requester, None);
+        assert_eq!(s.active_user(), "Alice");
+
+        let _ = s.accept_or_revoke();
+        assert_eq!(s.turn.holder, None);
+        assert_eq!(s.active_user(), "host");
     }
 }
