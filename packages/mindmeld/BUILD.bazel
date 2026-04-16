@@ -1,0 +1,30 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "meld",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
+    deps = [
+        "//packages/pty_manager",
+        "//packages/virtual_terminal",
+        "@crate_index//:anyhow",
+        "@crate_index//:arboard",
+        "@crate_index//:clap",
+        "@crate_index//:iroh",
+        "@crate_index//:iroh-tickets",
+        "@crate_index//:ratatui",
+        "@crate_index//:serde",
+        "@crate_index//:tokio",
+        "@crate_index//:toml",
+        "@crate_index//:tracing",
+        "@crate_index//:tracing-subscriber",
+        "@crate_index//:uuid",
+    ],
+)
+
+rust_test(
+    name = "meld_test",
+    crate = ":meld",
+)

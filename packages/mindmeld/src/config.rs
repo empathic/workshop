@@ -60,8 +60,8 @@ pub fn ensure_name(terminal: &mut ratatui::DefaultTerminal) -> Result<String> {
             frame.set_cursor_position((cursor_x, status_area.y));
         })?;
 
-        match event::read()? {
-            Event::Key(key) => match key.code {
+        if let Event::Key(key) = event::read()? {
+            match key.code {
                 KeyCode::Enter if !input.is_empty() => {
                     let config = Config {
                         name: input.clone(),
@@ -80,8 +80,7 @@ pub fn ensure_name(terminal: &mut ratatui::DefaultTerminal) -> Result<String> {
                 KeyCode::Left if cursor > 0 => cursor -= 1,
                 KeyCode::Right if cursor < input.len() => cursor += 1,
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
 }

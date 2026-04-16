@@ -314,12 +314,12 @@ pub async fn run(command: Vec<String>) -> Result<()> {
                         } else if key.code == KeyCode::F(10) {
                             let effects = state.deny();
                             apply_effects(&state, effects, &turn_tx, &denied_tx);
-                        } else if state.turn.holder.is_none() {
-                            if let Some(bytes) = crate::key_to_bytes(&key) {
-                                let text = String::from_utf8_lossy(&bytes);
-                                let _ = session.write_input(&text).await;
-                                scroll_offset = 0;
-                            }
+                        } else if state.turn.holder.is_none()
+                            && let Some(bytes) = crate::key_to_bytes(&key)
+                        {
+                            let text = String::from_utf8_lossy(&bytes);
+                            let _ = session.write_input(&text).await;
+                            scroll_offset = 0;
                         }
                     }
                     Event::Mouse(mouse) => match mouse.kind {
